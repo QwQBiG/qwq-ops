@@ -1,0 +1,145 @@
+# K8sGPT Integration Configuration
+# 此文件包含 K8sGPT 与 AIOps 平台其他组件的集成配置
+# 包括: K8sGPT CR, ServiceMonitor, Grafana Datasources
+#
+# 使用方法: kubectl apply -f k8sgpt_integration.yaml
+
+---
+# =============================================================================
+# 1. K8sGPT Custom Resource
+# 配置 K8sGPT 使用 localai backend 连接 Ollama 服务
+# 需求: 11.2, 11.3
+# =============================================================================
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: K8sGPT
+metadata:
+  name: k8sgpt
+  namespace: k8sgpt
+spec:
+  ai:
+    enabled: true
+    # 使用 localai provider 连接 Ollama 后端
+    backend: localai
+    # Ollama 服务端点 (部署在 ai 命名空间)
+    baseUrl: http://ollama.ai.svc.cluster.local:11434/v1
+    # 默认使用 llama3 模型，可根据资源情况调整为更小的模型
+    # 可选: gemma:2b, qwen:1.8b, tinyllama
+    model: llama3
+  # 禁用缓存以获取实时诊断结果
+  noCache: false
+  # 配置要分析的 Kubernetes 资源类型
+  filters:
+    - Pod
+    - Deployment
+    - Service
+    - ReplicaSet
+    - StatefulSet
+    - DaemonSet
+    - Job
+    - CronJob
+    - Ingress
+    - PersistentVolumeClaim
+  # 版本信息
+  version: latest
+
+---
+# =============================================================================
+# 2. ServiceMonitor for K8sGPT
+# 配置 VictoriaMetrics 抓取 K8sGPT 指标
+# 需求: 12.1, 12.2, 12.3
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: k8sgpt
+  namespace: k8sgpt
+  labels:
+    # VictoriaMetrics Operator 发现标签
+    # 与 victoria-metrics-k8s-stack 的 release 名称匹配
+    release: victoria-metrics
+    app.kubernetes.io/name: k8sgpt
+    app.kubernetes.io/component: monitoring
+spec:
+  # 选择器匹配 K8sGPT 服务
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: k8sgpt
+  # 指定命名空间
+  namespaceSelector:
+    matchNames:
+      - k8sgpt
+  # 指标端点配置
+  endpoints:
+    - port: metrics
+      # 抓取间隔
+      interval: 30s
+      # 抓取超时
+      scrapeTimeout: 10s
+      # 指标路径
+      path: /metrics
+      # 使用 HTTP scheme
+      scheme: http
+
+---
+# =============================================================================
+# 3. Grafana Datasource ConfigMaps
+# 配置 Grafana sidecar 自动发现数据源
+# 需求: 13.1, 13.2, 13.3, 13.4
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 3.1 Loki 数据源 ConfigMap
+# 需求: 13.1, 13.3
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-loki
+  namespace: monitoring
+  labels:
+    # Grafana sidecar 自动发现标签
+    # 此标签使 Grafana sidecar 自动加载数据源配置
+    grafana_datasource: "1"
+data:
+  loki-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        # Loki 服务端点 (部署在 logging 命名空间)
+        url: http://loki.logging.svc.cluster.local:3100
+        access: proxy
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+          timeout: 60
+        editable: true
+
+---
+# -----------------------------------------------------------------------------
+# 3.2 VictoriaMetrics 数据源 ConfigMap
+# 需求: 13.2, 13.3
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-victoriametrics
+  namespace: monitoring
+  labels:
+    # Grafana sidecar 自动发现标签
+    grafana_datasource: "1"
+data:
+  victoriametrics-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        # VictoriaMetrics 服务端点 (部署在 monitoring 命名空间)
+        # 使用 vmsingle 服务
+        url: http://vmsingle-vm.monitoring.svc.cluster.local:8429
+        access: proxy
+        isDefault: true
+        jsonData:
+          timeInterval: "15s"
+          httpMethod: POST
+        editable: true
