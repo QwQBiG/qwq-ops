@@ -18,7 +18,7 @@
 ```bash
 # 1. 克隆并进入目录
 git clone https://github.com/QwQBiG/qwq-ops.git
-cd aiops-platform
+cd qwq-ops
 
 # 2. 添加执行权限
 chmod +x *.sh
