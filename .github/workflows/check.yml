@@ -92,6 +92,10 @@ jobs:
           kubectl apply --server-side --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/namespaces.yaml"
           kubectl apply --server-side --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/crds.yaml"
           kubectl wait --for=condition=Established --timeout=120s -f "$RUNNER_TEMP/qwq-api-resources/crds.yaml"
+          # Pod admission checks accounts even when the Pod itself is a dry run.
+          if [[ -s "$RUNNER_TEMP/qwq-api-resources/serviceaccounts.yaml" ]]; then
+            kubectl apply --server-side --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/serviceaccounts.yaml"
+          fi
           kubectl apply --server-side --dry-run=server --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/resources.yaml"
       - name: Delete temporary cluster
         if: always()

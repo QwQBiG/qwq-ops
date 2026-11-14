@@ -24,16 +24,19 @@ class ApiValidationTests(unittest.TestCase):
                      "metadata": {"name": "apps", "labels": {"scope": "test"}}}
         crd = {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
                "metadata": {"name": "widgets.example.test"}}
+        account = {"apiVersion": "v1", "kind": "ServiceAccount",
+                   "metadata": {"name": "test-runner", "namespace": "apps"}}
         resource = {"apiVersion": "example.test/v1", "kind": "Widget",
                     "metadata": {"name": "sample", "namespace": "other"}}
-        self.write([namespace, None, crd, resource])
+        self.write([namespace, None, crd, account, resource])
         prepare(self.manifest, self.output)
         namespaces = list(yaml.safe_load_all((self.output / "namespaces.yaml").read_text(encoding="utf-8")))
         self.assertEqual(namespaces, [namespace, {"apiVersion": "v1", "kind": "Namespace",
                                                 "metadata": {"name": "other"}}])
-        for name, expected in (("crds", crd), ("resources", resource)):
+        for name, expected in (("crds", [crd]), ("serviceaccounts", [account]),
+                               ("resources", [account, resource])):
             actual = list(yaml.safe_load_all((self.output / (name + ".yaml")).read_text(encoding="utf-8")))
-            self.assertEqual(actual, [expected])
+            self.assertEqual(actual, expected)
 
     def test_empty_input_is_rejected_before_output_is_created(self):
         self.write([])

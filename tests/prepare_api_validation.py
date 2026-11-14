@@ -40,7 +40,9 @@ def prepare(manifest, output):
         raise ValueError("Rendered manifest contains no namespaces")
     output.mkdir(parents=True, exist_ok=False)
     groups = {"namespaces": [namespaces[name] for name in sorted(namespaces)],
-              "crds": crds, "resources": remaining}
+              "crds": crds,
+              "serviceaccounts": [item for item in remaining if item["kind"] == "ServiceAccount"],
+              "resources": remaining}
     for name, items in groups.items():
         (output / (name + ".yaml")).write_text(
             yaml.safe_dump_all(items, explicit_start=True, sort_keys=False, allow_unicode=True),
