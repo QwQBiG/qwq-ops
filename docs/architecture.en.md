@@ -34,6 +34,8 @@ Arrows from Grafana represent queries; arrows from Alloy and VMAgent represent w
 
 K8sGPT findings help with investigation. This deployment does not automatically restart, delete, or modify workloads based on those findings. Model requests go to the in-cluster Ollama service, although installation still requires access to external package and image registries.
 
+Ollama stores models on a PVC, using the cached model on startup and downloading it only if missing. Updating an existing tag requires an explicit pull; see the [operations guide](operations.en.md#configuration-and-preview) for the command.
+
 ## Directory boundaries
 
 | Path | Contents |
@@ -52,6 +54,8 @@ For a new component, first decide whether Helm or a manifest owns it, then add i
 ## Single-node tradeoffs
 
 Local Path Provisioner stores data on the current node. Node failure, disk loss, or PVC deletion can cause data loss. It does not replicate data across nodes or replace backups. Adding nodes requires a separate decision about persistent storage.
+
+Loki stores logs on a persistent volume. Alloy keeps read positions in a temporary container directory; after recreation, it may reread available logs and generate extra traffic.
 
 Metrics, logs, and models share the host's CPU, memory, and disk. Loading and running a model affects other components. Retention periods and PVC sizes must fit available storage. The repository's resource settings are a starting point for a lab; measure capacity with your own workloads.
 

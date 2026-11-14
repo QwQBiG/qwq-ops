@@ -39,6 +39,10 @@ python3 tests/validate_rendered.py /tmp/qwq-ops-rendered.yaml
 
 Rendered output includes Secrets; do not commit it or share it publicly.
 
+CI 还会创建临时 Kubernetes 1.35 集群，建立命名空间、CRD 和 Pod 准入检查需要的 ServiceAccount，再通过 API 服务端校验其余资源。这个检查用于确认资源能被目标 API 接受；组件运行、指标和日志传输及模型推理仍需单独验证。
+
+CI also creates a temporary Kubernetes 1.35 cluster, establishes namespaces, CRDs, and ServiceAccounts required by Pod admission, then validates the remaining resources with a server-side dry run. This checks API acceptance. Component operation, metrics and log transport, and model inference require separate validation.
+
 检查脚本不应改动主机或连接真实集群。涉及部署行为时，补充能够复现问题的命令替身测试，并同时覆盖成功路径与相关失败路径。静态检查与替身测试通过，不能证明组件已在真实集群中运行。
 
 Checks must not modify the host or connect to a real cluster. For deployment behavior, add command-stub tests that reproduce the problem and cover the relevant success and failure paths. Passing static checks and stub tests does not establish that the components run in a real cluster.

@@ -1,15 +1,11 @@
 """Run deployment entry points against isolated command stubs."""
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import tempfile
 import unittest
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
-BASH = os.environ.get("BASH_EXECUTABLE") or shutil.which("bash")
+from helpers import run_script, write_command
 
 HELM = r'''#!/usr/bin/env bash
 printf 'helm|%s\n' "$*" >> "$COMMAND_LOG"
@@ -72,19 +68,11 @@ class DeploymentTests(unittest.TestCase):
         self.folder = Path(self.temp.name)
         self.log = self.folder / "commands.log"
         for name, source in (("helm", HELM), ("kubectl", KUBECTL)):
-            path = self.folder / name
-            path.write_text(source, encoding="utf-8", newline="\n")
-            path.chmod(0o755)
+            write_command(self.folder, name, source)
 
     def run_script(self, name, *args, **overrides):
-        env = os.environ.copy()
-        env.update(PATH=str(self.folder) + os.pathsep + env["PATH"],
-                   COMMAND_LOG=self.log.as_posix())
-        env.update(overrides)
-        result = subprocess.run(
-            [BASH, str(ROOT / "scripts" / name), *args], env=env,
-            cwd=self.folder, capture_output=True, text=True, encoding="utf-8", timeout=20,
-        )
+        env = {"COMMAND_LOG": self.log.as_posix(), **overrides}
+        result = run_script(name, *args, folder=self.folder, env=env)
         commands = self.log.read_text(encoding="utf-8") if self.log.exists() else ""
         return result, commands
 
@@ -94,7 +82,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn("kubectl|", commands)
         self.assertEqual(commands.count("helm|template "), 6)
         self.assertEqual(commands.count("--version "), 6)
-        self.assertIn("ollama.models.pull[0]=tinyllama:latest", commands)
+        self.assertIn("extraEnv[0].value=tinyllama:latest", commands)
         resources = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
         diagnosis = next(doc for doc in resources if doc["kind"] == "K8sGPT")
         self.assertEqual(diagnosis["spec"]["ai"]["model"], "tinyllama:latest")

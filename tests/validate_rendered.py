@@ -8,6 +8,25 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def validate_diagnosis_integration(diagnosis, ollama):
+    config = diagnosis["spec"]["ai"]
+    if config["backend"] != "localai":
+        raise ValueError("K8sGPT does not use the configured local backend")
+    if config["baseUrl"] != "http://ollama.ai.svc.cluster.local:11434/v1":
+        raise ValueError("K8sGPT does not query the configured Ollama service")
+    model = config["model"]
+    for container in ollama["spec"]["template"]["spec"]["containers"]:
+        environment = {item["name"]: item.get("value") for item in container.get("env", [])}
+        hooks = "\n".join(str(part) for part in container.get("lifecycle", {})
+                          .get("postStart", {}).get("exec", {}).get("command", []))
+        if (environment.get("OLLAMA_BOOTSTRAP_MODEL") == model
+                and re.search(r"\bollama\s+show\b", hooks)
+                and re.search(r"\bollama\s+pull\b", hooks)
+                and "$OLLAMA_BOOTSTRAP_MODEL" in hooks):
+            return
+    raise ValueError("Ollama does not bootstrap the model configured in K8sGPT")
+
+
 def validate_workload_inventory(resources, script):
     block = re.search(r"<<'WORKLOADS'\n(.*?)\nWORKLOADS", script.read_text(encoding="utf-8"), re.S)
     if block is None:
@@ -69,14 +88,8 @@ def validate(path):
         raise ValueError("Metric writes do not target vmsingle-vm:8428")
 
     diagnosis = resource("K8sGPT", "k8sgpt", "k8sgpt")
-    model = diagnosis["spec"]["ai"]["model"]
     ollama = resource("Deployment", "ollama", "ai")
-    containers = ollama["spec"]["template"]["spec"]["containers"]
-    hooks = "\n".join(str(part) for item in containers
-                      for part in item.get("lifecycle", {}).get("postStart", {})
-                      .get("exec", {}).get("command", []))
-    if not re.search(r"\bollama\s+pull\b", hooks) or model not in hooks:
-        raise ValueError("Ollama does not pull the model configured in K8sGPT")
+    validate_diagnosis_integration(diagnosis, ollama)
     datasource = resource("ConfigMap", "grafana-datasource-loki", "monitoring")
     config = yaml.safe_load(datasource["data"]["loki.yaml"])
     if config["datasources"][0]["url"] != "http://loki-gateway.logging.svc.cluster.local":

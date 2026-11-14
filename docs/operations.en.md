@@ -21,6 +21,10 @@ The Pod network must be an IPv4 `/24` or larger network, with a prefix length no
 sudo env POD_CIDR=10.245.0.0/16 bash scripts/bootstrap.sh
 ```
 
+Initialization also checks the fixed Service network against host interface networks. If the host already uses an address within `10.96.0.0/12`, changing `POD_CIDR` alone cannot resolve the conflict; adjust host networking or plan the cluster separately.
+
+Existing containerd configuration is checked for `SystemdCgroup` on the actual default runtime. Settings on an unused runtime do not satisfy that requirement. Installation stops when the configuration cannot be identified reliably so it can be reviewed.
+
 `sudo` may discard the caller's environment variables; use `sudo env` to pass the required values explicitly. Rerunning bootstrap cannot change an existing cluster's network. If deployment is making progress but needs more time, increase the limits below. They apply per request or component, not to the deployment as a whole:
 
 ```bash
@@ -36,7 +40,15 @@ bash scripts/deploy.sh --render
 
 `--render` accesses Helm repositories but does not connect to a cluster. It checks whether templates can be generated, not target permissions, CRDs, available capacity, or data compatibility. It is not a complete diff against installed releases. Rendered output includes Secrets; do not commit it or share it publicly.
 
-Select a model with `--model MODEL` during deployment. The script uses the same model in Ollama and the K8sGPT integration. Running `ollama pull` alone downloads a model without changing K8sGPT's selection. `--model` only overrides the current invocation. Pass the same model on the next deployment, or set `OLLAMA_MODEL` in `config/versions.env` first; otherwise, deployment returns to the default selection. Before switching, assess memory and disk requirements and confirm that the model is available from its source.
+Select a model with `--model MODEL` during deployment. The script uses the same model in Ollama and the K8sGPT integration. `--model` only overrides the current invocation. Pass the same model on the next deployment, or set `OLLAMA_MODEL` in `config/versions.env` first; otherwise, deployment returns to the default selection. Before switching, assess memory and disk requirements and confirm that the model is available from its source.
+
+On startup, Ollama uses the locally cached model and downloads it only if missing. Restarting or redeploying does not refresh an existing model tag. To update the default model, `qwen2.5:1.5b`, run:
+
+```bash
+kubectl exec -n ai deploy/ollama -- ollama pull qwen2.5:1.5b
+```
+
+If you selected another model, replace the model name in this command with your selection. `ollama pull` downloads or updates the local model without changing K8sGPT's selection.
 
 ## Accessing services
 
@@ -85,6 +97,8 @@ Verification checks nodes, storage classes, Pods in the relevant namespaces, Hel
 | `CrashLoopBackOff` | `kubectl logs -n <namespace> <pod> --all-containers --previous` and current logs |
 | Helm failure or timeout | `helm status -n <namespace> <release>` and Pod events; resolve the cause before choosing a retry or rollback |
 | No logs in Grafana | `kubectl logs -n logging -l app.kubernetes.io/name=alloy`, Loki Pods and Services, and the data source configuration |
+
+Alloy saves log read positions in the container's temporary directory, `/tmp/alloy`. Recreating the container or Pod clears these records, so Alloy may reread logs still available through the Kubernetes API, adding API and log write traffic.
 
 After interrupted initialization, inspect `journalctl -u kubelet -u containerd` and the configuration already written. The bootstrap script stops when it finds existing cluster state to avoid initializing over it. Do not clear etcd, network rules, or kubeconfig just to retry.
 
