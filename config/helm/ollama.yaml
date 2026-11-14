@@ -2,6 +2,24 @@ fullnameOverride: ollama
 ollama:
   gpu:
     enabled: false
+extraEnv:
+  - name: OLLAMA_BOOTSTRAP_MODEL
+    # deploy.sh supplies the model selected for this invocation.
+    value: ""
+lifecycle:
+  postStart:
+    exec:
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          : "${OLLAMA_BOOTSTRAP_MODEL:?OLLAMA_BOOTSTRAP_MODEL is required}"
+          while ! ollama ps >/dev/null 2>&1; do
+            sleep 5
+          done
+          if ! ollama show "$OLLAMA_BOOTSTRAP_MODEL" >/dev/null 2>&1; then
+            ollama pull "$OLLAMA_BOOTSTRAP_MODEL"
+          fi
 persistentVolume:
   enabled: true
   size: 20Gi

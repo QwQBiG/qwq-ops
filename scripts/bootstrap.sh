@@ -67,12 +67,11 @@ preflight() {
 
 validate_runtime_config() {
     local runtime_config=$1
-    grep -Eq 'SystemdCgroup[[:space:]]*=[[:space:]]*true' <<< "$runtime_config" ||
-        die "Existing containerd config must enable SystemdCgroup; review it manually."
     # The normalized dump uses either quote style, depending on containerd's version.
     if grep -Eq "^disabled_plugins[[:space:]]*=.*['\"](cri|io\.containerd\.grpc\.v1\.cri|io\.containerd\.cri\.v1\.(images|runtime))['\"]" <<< "$runtime_config"; then
         die "Existing containerd config disables CRI; review it manually."
     fi
+    python3 "$ROOT/scripts/lib/runtime_config.py" <<< "$runtime_config"
 }
 
 validate_network() {
@@ -82,13 +81,16 @@ try:
     pod = ipaddress.ip_network(sys.argv[1])
     if pod.version != 4 or pod.prefixlen > 24:
         raise ValueError("Pod CIDR must be IPv4 with a prefix no longer than /24 (kubeadm default node subnet)")
-    if pod.overlaps(ipaddress.ip_network("10.96.0.0/12")):
+    service = ipaddress.ip_network("10.96.0.0/12")
+    if pod.overlaps(service):
         raise ValueError("Pod CIDR overlaps the kubeadm default service CIDR")
     for interface in json.load(sys.stdin):
         for address in interface.get("addr_info", []):
             host = ipaddress.ip_interface(str(address["local"]) + "/" + str(address["prefixlen"])).network
             if pod.overlaps(host):
                 raise ValueError("Pod CIDR overlaps host network " + str(host))
+            if service.overlaps(host):
+                raise ValueError("Service CIDR overlaps host network " + str(host))
 except (ValueError, KeyError) as error:
     sys.exit(str(error))
 ' "$POD_CIDR"

@@ -21,6 +21,10 @@ Pod 网段需要为 `/24` 或更大的 IPv4 网络（前缀长度不超过 24）
 sudo env POD_CIDR=10.245.0.0/16 bash scripts/bootstrap.sh
 ```
 
+初始化也会检查固定 Service 网段是否与主机地址网段冲突。若主机已经使用 `10.96.0.0/12` 范围内的网络，只调整 `POD_CIDR` 无法解决冲突，需要先调整主机网络或另行规划集群。
+
+已有 containerd 配置会按实际默认运行时检查 `SystemdCgroup`；其他未使用运行时的设置不能代替它。无法确认的配置会停止安装，交由使用者检查。
+
 `sudo` 不一定保留调用者的环境变量；使用 `sudo env` 明确传入需要的值。已有集群不能通过重新运行初始化脚本更换网段。部署时若仍有正常进展而等待时间不足，可以增加上限；这些时间按请求或组件分别计算，并非整个部署的总时限：
 
 ```bash
@@ -36,7 +40,15 @@ bash scripts/deploy.sh --render
 
 `--render` 需要访问 Helm 仓库，但不访问集群。它验证模板能否生成，不验证目标集群的权限、CRD、可用资源或数据兼容性，也不是对已有 release 的完整差异比较。渲染输出包含 Secret，不要提交仓库或公开分享。
 
-部署时通过 `--model MODEL` 选择模型。脚本会把同一模型写入 Ollama 配置和 K8sGPT 集成；单独执行 `ollama pull` 只下载模型，不会更改 K8sGPT 使用的模型。`--model` 只覆盖本次调用；下次部署时需要再次传入同一模型，或先在 `config/versions.env` 中设置 `OLLAMA_MODEL`，否则会恢复默认选择。换模型前评估内存与磁盘，并确认该模型在下载源可用。
+部署时通过 `--model MODEL` 选择模型。脚本会把同一模型写入 Ollama 配置和 K8sGPT 集成。`--model` 只覆盖本次调用；下次部署时需要再次传入同一模型，或先在 `config/versions.env` 中设置 `OLLAMA_MODEL`，否则会恢复默认选择。换模型前评估内存与磁盘，并确认该模型在下载源可用。
+
+Ollama 启动时优先使用本地已有模型，缺失时才下载。重启或重复部署不会自动刷新同名 tag；要更新默认模型 `qwen2.5:1.5b`，显式执行：
+
+```bash
+kubectl exec -n ai deploy/ollama -- ollama pull qwen2.5:1.5b
+```
+
+如果选择了其他模型，将命令中的模型名替换为当前选择。`ollama pull` 只下载或更新本地模型，不会更改 K8sGPT 使用的模型。
 
 ## 访问界面
 
@@ -85,6 +97,8 @@ helm list -A
 | `CrashLoopBackOff` | `kubectl logs -n <namespace> <pod> --all-containers --previous` 与当前日志 |
 | Helm 失败或超时 | `helm status -n <namespace> <release>` 和相关 Pod 事件，修复原因后再决定重试或回滚 |
 | Grafana 没有日志 | `kubectl logs -n logging -l app.kubernetes.io/name=alloy`，以及 Loki Pod、Service 和数据源配置 |
+
+Alloy 的日志读取位置保存在容器临时目录 `/tmp/alloy`。容器或 Pod 重建会清空这些记录，可能使 Alloy 重新读取 Kubernetes API 仍可提供的日志，增加 API 和日志写入流量。
 
 主机初始化中断后，先查 `journalctl -u kubelet -u containerd` 和实际生成的配置。脚本发现已有集群状态会停止，避免重新初始化覆盖现状；不要直接清空 etcd、网络规则或 kubeconfig 来重试。
 

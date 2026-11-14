@@ -1,50 +1,34 @@
 """Exercise command boundaries without changing a host or contacting a cluster."""
-import os
-from pathlib import Path
 import re
-import shutil
-import subprocess
-import tempfile
 import unittest
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
-BASH = os.environ.get("BASH_EXECUTABLE") or shutil.which("bash")
+from helpers import ROOT, run_script
 
 
 class ToolingTests(unittest.TestCase):
-    def run_script(self, name, *args, env=None):
-        merged = os.environ.copy()
-        if env:
-            merged.update(env)
-        return subprocess.run(
-            [BASH, str(ROOT / "scripts" / name), *args],
-            cwd=tempfile.gettempdir(), env=merged, text=True,
-            encoding="utf-8", capture_output=True, timeout=20,
-        )
-
     def test_help_is_available_without_cluster_tools(self):
         for name in ("bootstrap.sh", "storage.sh", "deploy.sh", "verify.sh"):
             with self.subTest(name=name):
-                result = self.run_script(name, "--help")
+                result = run_script(name, "--help")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("Usage:", result.stdout)
 
     def test_unknown_options_fail_before_work(self):
         for name in ("bootstrap.sh", "storage.sh", "deploy.sh", "verify.sh"):
             with self.subTest(name=name):
-                result = self.run_script(name, "--unknown-option")
+                result = run_script(name, "--unknown-option")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Unknown", result.stderr)
 
     def test_model_argument_requires_a_value(self):
-        result = self.run_script("deploy.sh", "--model")
+        result = run_script("deploy.sh", "--model")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("model", result.stderr.lower())
 
     def test_model_rejects_template_metacharacters(self):
-        result = self.run_script("deploy.sh", "--model", "invalid&model")
+        result = run_script("deploy.sh", "--model", "invalid&model")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("model", result.stderr.lower())
 

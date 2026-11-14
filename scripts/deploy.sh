@@ -77,7 +77,7 @@ chart loki logging loki https://grafana.github.io/helm-charts "$LOKI_CHART_VERSI
 chart alloy logging alloy https://grafana.github.io/helm-charts "$ALLOY_CHART_VERSION" alloy
 chart argocd argocd argo-cd https://argoproj.github.io/argo-helm "$ARGOCD_CHART_VERSION" argocd
 chart ollama ai ollama https://otwld.github.io/ollama-helm "$OLLAMA_CHART_VERSION" ollama \
-    --set-string "ollama.models.pull[0]=$OLLAMA_MODEL"
+    --set-string "extraEnv[0].value=$OLLAMA_MODEL"
 chart k8sgpt-operator k8sgpt k8sgpt-operator https://charts.k8sgpt.ai "$K8SGPT_CHART_VERSION" k8sgpt
 
 if "$render"; then
