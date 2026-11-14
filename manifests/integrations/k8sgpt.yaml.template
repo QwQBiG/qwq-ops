@@ -1,0 +1,19 @@
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: K8sGPT
+metadata:
+  name: k8sgpt
+  namespace: k8sgpt
+spec:
+  ai:
+    enabled: true
+    backend: localai
+    baseUrl: http://ollama.ai.svc.cluster.local:11434/v1
+    model: "@@OLLAMA_MODEL@@"
+  version: "@@K8SGPT_VERSION@@"
+  noCache: false
+  filters:
+    - Pod
+    - Deployment
+    - Service
+    - StatefulSet
+    - PersistentVolumeClaim

@@ -1,0 +1,39 @@
+fullnameOverride: vm
+victoria-metrics-operator:
+  crds:
+    cleanup:
+      enabled: false
+grafana:
+  fullnameOverride: grafana
+  persistence:
+    enabled: true
+    size: 2Gi
+  sidecar:
+    datasources:
+      enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+vmsingle:
+  spec:
+    retentionPeriod: 7d
+    storage:
+      resources:
+        requests:
+          storage: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+# Kubeadm binds these endpoints to loopback by default.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false

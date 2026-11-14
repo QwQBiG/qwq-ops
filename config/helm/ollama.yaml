@@ -1,0 +1,16 @@
+fullnameOverride: ollama
+ollama:
+  gpu:
+    enabled: false
+persistentVolume:
+  enabled: true
+  size: 20Gi
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+service:
+  type: ClusterIP
+  port: 11434
