@@ -6,16 +6,37 @@
 
 ## 配置与预览
 
-组件版本集中在 `config/versions.env`，各组件的资源、持久化和保留期在 `config/helm/`。修改后先检查渲染结果：
+组件版本与默认值集中在 `config/versions.env`，各组件的资源、持久化和保留期在 `config/helm/`。环境变量可以临时覆盖版本文件中的值：
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `POD_CIDR` | `10.244.0.0/16` | 初始化集群时使用的 Pod IPv4 网段 |
+| `WAIT_TIMEOUT` | `300s` | 每次资源创建、就绪或滚动更新的等待上限 |
+| `HELM_TIMEOUT` | `15m` | 每个 Helm release 的安装或升级等待上限 |
+| `REQUEST_TIMEOUT` | `30s` | 单次 kubectl API 请求的超时 |
+
+Pod 网段需要为 `/24` 或更大的 IPv4 网络（前缀长度不超过 24），并避开主机网络与默认 Service 网段 `10.96.0.0/12`。例如，确认 `10.245.0.0/16` 在目标环境中不冲突后，可在首次初始化时指定：
+
+```bash
+sudo env POD_CIDR=10.245.0.0/16 bash scripts/bootstrap.sh
+```
+
+`sudo` 不一定保留调用者的环境变量；使用 `sudo env` 明确传入需要的值。已有集群不能通过重新运行初始化脚本更换网段。部署时若仍有正常进展而等待时间不足，可以增加上限；这些时间按请求或组件分别计算，并非整个部署的总时限：
+
+```bash
+HELM_TIMEOUT=30m WAIT_TIMEOUT=900s REQUEST_TIMEOUT=60s bash scripts/deploy.sh
+```
+
+修改配置后先检查渲染结果：
 
 ```bash
 bash scripts/deploy.sh --help
 bash scripts/deploy.sh --render
 ```
 
-`--render` 需要访问 Helm 仓库，但不访问集群。它验证模板能否生成，不验证目标集群的权限、CRD、可用资源或数据兼容性，也不是对已有 release 的完整差异比较。
+`--render` 需要访问 Helm 仓库，但不访问集群。它验证模板能否生成，不验证目标集群的权限、CRD、可用资源或数据兼容性，也不是对已有 release 的完整差异比较。渲染输出包含 Secret，不要提交仓库或公开分享。
 
-部署时通过 `--model MODEL` 选择模型。脚本会把同一模型写入 Ollama 配置和 K8sGPT 集成；单独执行 `ollama pull` 只下载模型，不会更改 K8sGPT 使用的模型。换模型前评估内存与磁盘，并确认该模型在下载源可用。
+部署时通过 `--model MODEL` 选择模型。脚本会把同一模型写入 Ollama 配置和 K8sGPT 集成；单独执行 `ollama pull` 只下载模型，不会更改 K8sGPT 使用的模型。`--model` 只覆盖本次调用；下次部署时需要再次传入同一模型，或先在 `config/versions.env` 中设置 `OLLAMA_MODEL`，否则会恢复默认选择。换模型前评估内存与磁盘，并确认该模型在下载源可用。
 
 ## 访问界面
 
@@ -54,7 +75,7 @@ kubectl get events -A --sort-by=.metadata.creationTimestamp
 helm list -A
 ```
 
-验证脚本检查节点、存储类、相关命名空间的 Pod、Helm release、K8sGPT 配置及模型可用性；任何一项失败都需要处理。命令无法访问 API、空 Pod 列表或运行中但未就绪的 Pod 不应视为成功。
+验证脚本检查节点、存储类、相关命名空间的 Pod、Helm release、K8sGPT 配置及模型可用性，也会检查关键 Deployment、StatefulSet 和 DaemonSet 是否存在且完成更新。任何一项失败都需要处理；API 无法访问、空 Pod 列表或运行中但未就绪的 Pod 不应视为成功。检查通过不代表已验证指标和日志的实际传输或诊断质量。
 
 | 现象 | 先检查什么 |
 | --- | --- |

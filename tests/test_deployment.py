@@ -46,12 +46,16 @@ case "$*" in
         if [[ $* == *metadata.name* ]]; then printf 'local-path|true|\n'
         else printf '%s\n' "${FAKE_STORAGE:-true}"; fi ;;
     'get nodes '*) printf '%s\n' "${FAKE_NODES-node|True}" ;;
+    'get pods -n logging '*) printf '%s\n' "${LOGGING_PODS-${FAKE_PODS-pod|Running||True}}" ;;
     'get pods '*) printf '%s\n' "${FAKE_PODS-pod|Running||True}" ;;
     'get k8sgpt '*) printf 'qwen2.5:1.5b' ;;
-    'get deployment/'*|'get statefulset/'*)
+    'get deployment/'*|'get statefulset/'*|'get daemonset/'*)
+        if [[ $* == "get ${MISSING_WORKLOAD:-no-match} "* ]]; then exit 44; fi
         if [[ $* == *'/k8sgpt '* && -n ${MISSING_DIAGNOSIS:-} ]]; then exit; fi
         if [[ $* == *'/vmsingle-vm '* && -n ${MISSING_METRICS:-} ]]; then exit; fi
-        printf '%s' "${WORKLOAD_STATUS:-1|1|1|1|1}" ;;
+        if [[ $* == 'get daemonset/'* ]]; then
+            printf '%s' "${DAEMONSET_STATUS:-1|1|1|1|1}"
+        else printf '%s' "${WORKLOAD_STATUS:-1|1|1|1|1}"; fi ;;
     'exec '*) [[ -z ${FAIL_MODEL:-} ]] ;;
     'wait '*|'rollout status '*) ;;
     'apply -f -') cat >/dev/null ;;
@@ -188,3 +192,47 @@ class DeploymentTests(unittest.TestCase):
     def test_verification_fails_for_an_old_workload_generation(self):
         result, _ = self.run_script("verify.sh", WORKLOAD_STATUS="2|1|1|1|1")
         self.assertNotEqual(result.returncode, 0)
+
+    def test_verification_fails_without_loki_despite_ready_logging_pods(self):
+        result, commands = self.run_script(
+            "verify.sh", MISSING_WORKLOAD="statefulset/loki",
+            LOGGING_PODS="alloy-a|Running||True\nloki-gateway-a|Running||True",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot read logging/statefulset/loki", result.stderr)
+        self.assertIn("get statefulset/loki -n logging", commands)
+
+    def test_verification_fails_without_a_primary_chart_controller(self):
+        for workload in (
+            "deployment/grafana", "deployment/argocd-server",
+            "deployment/k8sgpt-operator-controller-manager",
+        ):
+            with self.subTest(workload=workload):
+                result, _ = self.run_script("verify.sh", MISSING_WORKLOAD=workload)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(workload, result.stderr)
+
+    def test_verification_uses_daemonset_scheduling_and_availability(self):
+        result, commands = self.run_script("verify.sh", DAEMONSET_STATUS="2|2|3|3|3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        query = next(line for line in commands.splitlines()
+                     if "get daemonset/alloy " in line)
+        self.assertIn(".status.desiredNumberScheduled", query)
+        self.assertIn(".status.updatedNumberScheduled", query)
+        self.assertIn(".status.numberAvailable", query)
+        self.assertNotIn(".spec.replicas", query)
+
+    def test_verification_fails_for_a_daemonset_with_no_scheduled_pods(self):
+        result, _ = self.run_script("verify.sh", DAEMONSET_STATUS="1|1|0|0|0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("daemonset/alloy is not fully rolled out", result.stderr)
+
+    def test_verification_fails_for_a_daemonset_without_available_pods(self):
+        result, _ = self.run_script("verify.sh", DAEMONSET_STATUS="1|1|1|1|0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("daemonset/alloy is not fully rolled out", result.stderr)
+
+    def test_verification_fails_for_a_daemonset_with_stale_replicas(self):
+        result, _ = self.run_script("verify.sh", DAEMONSET_STATUS="2|2|2|1|2")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("daemonset/alloy is not fully rolled out", result.stderr)

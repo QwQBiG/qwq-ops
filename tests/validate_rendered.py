@@ -5,6 +5,38 @@ import re
 
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_workload_inventory(resources, script):
+    block = re.search(r"<<'WORKLOADS'\n(.*?)\nWORKLOADS", script.read_text(encoding="utf-8"), re.S)
+    if block is None:
+        raise ValueError("Verification workload inventory is missing")
+    entries = [tuple(line.split()) for line in block[1].splitlines() if line.strip()]
+    if any(len(entry) != 2 for entry in entries) or len(entries) != len(set(entries)):
+        raise ValueError("Verification workload inventory has invalid or duplicate entries")
+
+    expected = set()
+    generated = {"VMSingle": "deployment/vmsingle-", "VMAgent": "deployment/vmagent-",
+                 "VMAlert": "deployment/vmalert-", "VMAlertmanager": "statefulset/vmalertmanager-",
+                 "K8sGPT": "deployment/"}
+    for item in resources:
+        kind = item["kind"]
+        metadata = item.get("metadata", {})
+        name = metadata.get("name", "")
+        namespace = metadata.get("namespace")
+        # This chart relies on Helm's release namespace rather than rendering it.
+        if name == "k8sgpt-operator-controller-manager" and not namespace:
+            namespace = "k8sgpt"
+        if kind in ("Deployment", "StatefulSet", "DaemonSet"):
+            expected.add((namespace, f"{kind.lower()}/{name}"))
+        elif kind in generated:
+            expected.add((namespace, generated[kind] + name))
+    if set(entries) != expected:
+        missing = sorted(expected - set(entries), key=str)
+        extra = sorted(set(entries) - expected, key=str)
+        raise ValueError(f"Verification inventory differs from rendered workloads: missing={missing}, extra={extra}")
+
 
 def validate(path):
     resources = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc]
@@ -49,6 +81,7 @@ def validate(path):
     config = yaml.safe_load(datasource["data"]["loki.yaml"])
     if config["datasources"][0]["url"] != "http://loki-gateway.logging.svc.cluster.local":
         raise ValueError("Grafana does not query the configured Loki gateway")
+    validate_workload_inventory(resources, ROOT / "scripts" / "verify.sh")
     print(f"Validated {len(resources)} resources and platform integration contracts")
 
 

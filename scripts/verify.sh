@@ -83,9 +83,17 @@ check_release ai ollama
 check_release k8sgpt k8sgpt-operator
 
 check_workload() {
-    local namespace=$1 workload=$2 field=availableReplicas state generation observed desired updated ready
-    [[ $workload != statefulset/* ]] || field=readyReplicas
-    if ! state=$(kube get "$workload" -n "$namespace" -o "jsonpath={.metadata.generation}{\"|\"}{.status.observedGeneration}{\"|\"}{.spec.replicas}{\"|\"}{.status.updatedReplicas}{\"|\"}{.status.$field}"); then
+    local namespace=$1 workload=$2 desired_path=spec.replicas
+    local updated_path=status.updatedReplicas ready_path=status.availableReplicas
+    local state generation observed desired updated ready
+    case "$workload" in
+        statefulset/*) ready_path=status.readyReplicas ;;
+        daemonset/*)
+            desired_path=status.desiredNumberScheduled
+            updated_path=status.updatedNumberScheduled
+            ready_path=status.numberAvailable ;;
+    esac
+    if ! state=$(kube get "$workload" -n "$namespace" -o "jsonpath={.metadata.generation}{\"|\"}{.status.observedGeneration}{\"|\"}{.$desired_path}{\"|\"}{.$updated_path}{\"|\"}{.$ready_path}"); then
         fail "Cannot read $namespace/$workload"
     elif [[ ! $state =~ ^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$ ]]; then
         fail "$namespace/$workload has incomplete replica status"
@@ -98,10 +106,39 @@ check_workload() {
         fi
     fi
 }
-for workload in deployment/vmsingle-vm deployment/vmagent-vm deployment/vmalert-vm statefulset/vmalertmanager-vm; do
-    check_workload monitoring "$workload"
-done
-check_workload k8sgpt deployment/k8sgpt
+
+# Helm's release status does not change when a managed controller is deleted.
+# The rendered-manifest check compares this inventory with chart controllers
+# and the controllers generated from this platform's custom resources.
+managed_workloads() {
+    cat <<'WORKLOADS'
+monitoring deployment/grafana
+monitoring deployment/victoria-metrics-kube-state-metrics
+monitoring deployment/victoria-metrics-victoria-metrics-operator
+monitoring daemonset/victoria-metrics-prometheus-node-exporter
+monitoring deployment/vmsingle-vm
+monitoring deployment/vmagent-vm
+monitoring deployment/vmalert-vm
+monitoring statefulset/vmalertmanager-vm
+logging statefulset/loki
+logging deployment/loki-gateway
+logging daemonset/alloy
+argocd deployment/argocd-applicationset-controller
+argocd deployment/argocd-notifications-controller
+argocd deployment/argocd-repo-server
+argocd deployment/argocd-server
+argocd deployment/argocd-dex-server
+argocd deployment/argocd-redis
+argocd statefulset/argocd-application-controller
+ai deployment/ollama
+k8sgpt deployment/k8sgpt-operator-controller-manager
+k8sgpt deployment/k8sgpt
+WORKLOADS
+}
+
+while read -r namespace workload; do
+    check_workload "$namespace" "$workload"
+done < <(managed_workloads)
 
 if model=$(kube get k8sgpt k8sgpt -n k8sgpt -o 'jsonpath={.spec.ai.model}'); then
     if [[ -z $model ]]; then
