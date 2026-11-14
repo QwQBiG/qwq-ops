@@ -6,9 +6,18 @@ Read the [English README](README.en.md) and [architecture guide](docs/architectu
 
 ## 本地检查 / Local checks
 
-在 Linux、WSL 或其他具备 Bash 和 Python 3 的环境中执行。先安装 ShellCheck，再安装 Python 检查依赖：
+在 Linux、WSL 或其他具备 Bash 的环境中执行，需要 ShellCheck 和支持 `venv` 的 Python 3。Ubuntu 可先安装以下依赖：
 
-Use Linux, WSL, or another environment with Bash and Python 3. Install ShellCheck, then install the Python check dependencies:
+Use Linux, WSL, or another environment with Bash. You need ShellCheck and Python 3 with `venv` support. On Ubuntu, install these dependencies first:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv shellcheck
+```
+
+随后创建虚拟环境并安装 Python 检查依赖：
+
+Then create a virtual environment and install the Python check dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -25,6 +34,10 @@ With Helm 3 installed, validate the pinned chart output and integration contract
 bash scripts/deploy.sh --render > /tmp/qwq-ops-rendered.yaml
 python3 tests/validate_rendered.py /tmp/qwq-ops-rendered.yaml
 ```
+
+渲染输出包含 Secret，不要提交仓库或公开分享。
+
+Rendered output includes Secrets; do not commit it or share it publicly.
 
 检查脚本不应改动主机或连接真实集群。涉及部署行为时，补充能够复现问题的命令替身测试，并同时覆盖成功路径与相关失败路径。静态检查与替身测试通过，不能证明组件已在真实集群中运行。
 

@@ -61,11 +61,17 @@ preflight() {
         require_command containerd
         local runtime_config
         runtime_config=$(containerd config dump)
-        grep -Eq 'SystemdCgroup[[:space:]]*=[[:space:]]*true' <<< "$runtime_config" ||
-            die "Existing containerd config must enable SystemdCgroup; review it manually."
-        if grep -Eq 'disabled_plugins[[:space:]]*=.*"(io.containerd.grpc.v1.)?cri"' <<< "$runtime_config"; then
-            die "Existing containerd config disables CRI; review it manually."
-        fi
+        validate_runtime_config "$runtime_config"
+    fi
+}
+
+validate_runtime_config() {
+    local runtime_config=$1
+    grep -Eq 'SystemdCgroup[[:space:]]*=[[:space:]]*true' <<< "$runtime_config" ||
+        die "Existing containerd config must enable SystemdCgroup; review it manually."
+    # The normalized dump uses either quote style, depending on containerd's version.
+    if grep -Eq "^disabled_plugins[[:space:]]*=.*['\"](cri|io\.containerd\.grpc\.v1\.cri|io\.containerd\.cri\.v1\.(images|runtime))['\"]" <<< "$runtime_config"; then
+        die "Existing containerd config disables CRI; review it manually."
     fi
 }
 
@@ -74,8 +80,8 @@ validate_network() {
 import ipaddress, json, sys
 try:
     pod = ipaddress.ip_network(sys.argv[1])
-    if pod.version != 4 or pod.prefixlen > 26:
-        raise ValueError("Pod CIDR must be IPv4 with a prefix no longer than /26")
+    if pod.version != 4 or pod.prefixlen > 24:
+        raise ValueError("Pod CIDR must be IPv4 with a prefix no longer than /24 (kubeadm default node subnet)")
     if pod.overlaps(ipaddress.ip_network("10.96.0.0/12")):
         raise ValueError("Pod CIDR overlaps the kubeadm default service CIDR")
     for interface in json.load(sys.stdin):
@@ -128,17 +134,25 @@ install_runtime() {
     systemctl is-active --quiet containerd
 }
 
+install_keyring() (
+    local keyring=$1 key_url=$2
+    [[ ! -s $keyring ]] || return 0
+    local temporary
+    temporary=$(mktemp "${keyring}.XXXXXX")
+    trap 'rm -f -- "$temporary"' EXIT
+    curl_fetch "$key_url" | gpg --batch --yes --dearmor --output "$temporary"
+    [[ -s $temporary ]] || die "Downloaded Kubernetes keyring is empty."
+    chmod 0644 "$temporary"
+    mv -- "$temporary" "$keyring"
+)
+
 install_kubernetes() {
     log "Installing Kubernetes $KUBERNETES_VERSION."
     local minor=${KUBERNETES_VERSION%.*}
     local keyring=/etc/apt/keyrings/qwq-ops-kubernetes.gpg
     local repository=/etc/apt/sources.list.d/qwq-ops-kubernetes.list
     install -d -m 0755 /etc/apt/keyrings
-    if [[ ! -e $keyring ]]; then
-        curl_fetch "https://pkgs.k8s.io/core:/stable:/v${minor}/deb/Release.key" |
-            gpg --dearmor --output "$keyring"
-        chmod 0644 "$keyring"
-    fi
+    install_keyring "$keyring" "https://pkgs.k8s.io/core:/stable:/v${minor}/deb/Release.key"
     local expected="deb [signed-by=$keyring] https://pkgs.k8s.io/core:/stable:/v${minor}/deb/ /"
     if [[ -e $repository ]]; then
         [[ $(cat "$repository") == "$expected" ]] ||

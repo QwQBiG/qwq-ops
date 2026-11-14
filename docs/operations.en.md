@@ -6,16 +6,37 @@ Cluster commands in this guide use the current user's kubeconfig. Check the targ
 
 ## Configuration and preview
 
-Component versions live in `config/versions.env`. Resource settings, persistence, and retention live in `config/helm/`. Inspect rendered output before deploying a change:
+Component versions and defaults live in `config/versions.env`. Resource settings, persistence, and retention live in `config/helm/`. Environment variables can override the version file for a single invocation:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `POD_CIDR` | `10.244.0.0/16` | Pod IPv4 network used during cluster initialization |
+| `WAIT_TIMEOUT` | `300s` | Limit for each resource creation, readiness, or rollout wait |
+| `HELM_TIMEOUT` | `15m` | Installation or upgrade wait limit for each Helm release |
+| `REQUEST_TIMEOUT` | `30s` | Timeout for an individual kubectl API request |
+
+The Pod network must be an IPv4 `/24` or larger network, with a prefix length no greater than 24. It must not overlap the host network or the default Service network, `10.96.0.0/12`. For example, after confirming that `10.245.0.0/16` does not conflict in the target environment, select it for initial setup:
+
+```bash
+sudo env POD_CIDR=10.245.0.0/16 bash scripts/bootstrap.sh
+```
+
+`sudo` may discard the caller's environment variables; use `sudo env` to pass the required values explicitly. Rerunning bootstrap cannot change an existing cluster's network. If deployment is making progress but needs more time, increase the limits below. They apply per request or component, not to the deployment as a whole:
+
+```bash
+HELM_TIMEOUT=30m WAIT_TIMEOUT=900s REQUEST_TIMEOUT=60s bash scripts/deploy.sh
+```
+
+Inspect rendered output after changing configuration:
 
 ```bash
 bash scripts/deploy.sh --help
 bash scripts/deploy.sh --render
 ```
 
-`--render` accesses Helm repositories but does not connect to a cluster. It checks whether templates can be generated, not target permissions, CRDs, available capacity, or data compatibility. It is not a complete diff against installed releases.
+`--render` accesses Helm repositories but does not connect to a cluster. It checks whether templates can be generated, not target permissions, CRDs, available capacity, or data compatibility. It is not a complete diff against installed releases. Rendered output includes Secrets; do not commit it or share it publicly.
 
-Select a model with `--model MODEL` during deployment. The script uses the same model in Ollama and the K8sGPT integration. Running `ollama pull` alone downloads a model without changing K8sGPT's selection. Before switching, assess memory and disk requirements and confirm that the model is available from its source.
+Select a model with `--model MODEL` during deployment. The script uses the same model in Ollama and the K8sGPT integration. Running `ollama pull` alone downloads a model without changing K8sGPT's selection. `--model` only overrides the current invocation. Pass the same model on the next deployment, or set `OLLAMA_MODEL` in `config/versions.env` first; otherwise, deployment returns to the default selection. Before switching, assess memory and disk requirements and confirm that the model is available from its source.
 
 ## Accessing services
 
@@ -54,7 +75,7 @@ kubectl get events -A --sort-by=.metadata.creationTimestamp
 helm list -A
 ```
 
-Verification checks nodes, storage classes, Pods in the relevant namespaces, Helm releases, K8sGPT configuration, and model availability. Investigate every failed check. API failures, empty Pod lists, and running Pods that are not ready must not count as success.
+Verification checks nodes, storage classes, Pods in the relevant namespaces, Helm releases, K8sGPT configuration, and model availability. It also checks that key Deployments, StatefulSets, and DaemonSets exist and have completed their rollouts. Investigate every failed check; API failures, empty Pod lists, and running Pods that are not ready must not count as success. Passing does not verify actual metric and log delivery or diagnosis quality.
 
 | Symptom | Start here |
 | --- | --- |
