@@ -44,8 +44,9 @@ jobs:
       NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       KIND_CLUSTER_NAME: qwq-api-${{ github.run_id }}-${{ github.run_attempt }}
       KIND_EXPERIMENTAL_PROVIDER: docker
-      KUBECONFIG: ${{ runner.temp }}/qwq-api-kubeconfig
     steps:
+      - name: Configure isolated kubeconfig
+        run: printf 'KUBECONFIG=%s\n' "$RUNNER_TEMP/qwq-api-kubeconfig" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
