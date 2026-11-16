@@ -10,8 +10,14 @@ This project is intended for learning, testing, and personal labs. It uses a sin
 
 - Host initialization targets **Ubuntu 22.04 / 24.04** and requires `sudo`. It changes swap, kernel settings, package repositories, and the container runtime.
 - Prepare Bash, `curl`, Python 3, `ip` (iproute2), and access to package, image, Helm, and model repositories. The mirror option only changes the image repository used by kubeadm; it does not redirect every download.
-- Platform deployment requires `kubectl` with cluster access and **Helm 3**. Follow the [official Helm installation guide](https://helm.sh/docs/intro/install/) and inspect the download and version first.
+- Platform deployment requires `kubectl` with cluster access and **Helm 3** compatible with Kubernetes 1.35. Use [v3.22.1](https://github.com/helm/helm/releases/tag/v3.22.1) to match CI. Follow the [Helm 3 installation guide](https://helm.sh/docs/v3/intro/install/), select the release archive for your operating system and architecture, and verify the download. If using a package manager, explicitly select the version as well.
 - Reserve resources for metrics, logs, and models. An 8-core CPU, 16 GB RAM, and 100 GB of free SSD space can serve as an initial lab plan. This is not a load-tested capacity guarantee; model size and retention settings affect actual usage.
+
+Check the installed Helm version; the recommended version should print output starting with `v3.22.1`. Before choosing another version, confirm that its [official Kubernetes compatibility range](https://helm.sh/docs/v3/topics/version_skew/) covers this project's Kubernetes 1.35 target.
+
+```bash
+helm version --short
+```
 
 When reusing a cluster already configured from this repository, skip host initialization and review its version, permissions, and installed components first. Deployment and verification expect Calico and Local Path Provisioner; other networking, storage, or multi-node topologies require adaptation. Read the [architecture tradeoffs](docs/architecture.en.md#single-node-tradeoffs) before deploying.
 

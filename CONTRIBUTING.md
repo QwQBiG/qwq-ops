@@ -26,9 +26,9 @@ python3 -m pip install -r requirements-dev.txt
 bash scripts/check.sh
 ```
 
-安装 Helm 3 后，还可检查固定 chart 的实际输出与集成约定。此步骤会下载 chart，不连接集群；CI 也会执行：
+安装与 CI 一致的 Helm v3.22.1 后，可检查固定 chart 的实际输出与集成约定。安装与兼容要求见 [README](README.md#开始之前)。此步骤会下载 chart，不连接集群：
 
-With Helm 3 installed, validate the pinned chart output and integration contracts. This downloads charts without connecting to a cluster, and also runs in CI:
+Install Helm v3.22.1 to match CI; see the [README](README.en.md#before-you-begin) for installation and compatibility requirements. Then validate the pinned chart output and integration contracts. This downloads charts without connecting to a cluster:
 
 ```bash
 bash scripts/deploy.sh --render > /tmp/qwq-ops-rendered.yaml
@@ -39,9 +39,9 @@ python3 tests/validate_rendered.py /tmp/qwq-ops-rendered.yaml
 
 Rendered output includes Secrets; do not commit it or share it publicly.
 
-CI 还会创建临时 Kubernetes 1.35 集群，建立命名空间、CRD 和 Pod 准入检查需要的 ServiceAccount，再通过 API 服务端校验其余资源。这个检查用于确认资源能被目标 API 接受；组件运行、指标和日志传输及模型推理仍需单独验证。
+CI 还会创建临时 Kubernetes 1.35 集群，建立命名空间、CRD 和 Pod 准入检查需要的 ServiceAccount，再通过 API 服务端校验其余资源。它也会通过受控的资源状态和分析器配置验证等待条件，不启动对应的 Operator 或模型工作负载。组件运行、指标和日志传输及模型推理仍需单独验证。
 
-CI also creates a temporary Kubernetes 1.35 cluster, establishes namespaces, CRDs, and ServiceAccounts required by Pod admission, then validates the remaining resources with a server-side dry run. This checks API acceptance. Component operation, metrics and log transport, and model inference require separate validation.
+CI also creates a temporary Kubernetes 1.35 cluster, establishes namespaces, CRDs, and ServiceAccounts required by Pod admission, then validates the remaining resources with a server-side dry run. It also exercises wait conditions using controlled resource status and analyzer configuration, without starting the corresponding Operators or model workloads. Component operation, metrics and log transport, and model inference require separate validation.
 
 检查脚本不应改动主机或连接真实集群。涉及部署行为时，补充能够复现问题的命令替身测试，并同时覆盖成功路径与相关失败路径。静态检查与替身测试通过，不能证明组件已在真实集群中运行。
 
@@ -49,13 +49,17 @@ Checks must not modify the host or connect to a real cluster. For deployment beh
 
 ## 版本与配置 / Versions and configuration
 
-- 版本统一放在 `config/versions.env`。升级前核对上游发布说明、兼容要求及数据迁移步骤。
+- 部署组件版本统一放在 `config/versions.env`。升级前核对上游发布说明、兼容要求及数据迁移步骤。
 - 组件参数放在 `config/helm/`；跨组件资源放在 `manifests/`。不要把真实凭据写入仓库。
 - 文本文件使用 UTF-8、LF 换行。中文和英文文档中的命令、路径与行为边界需要对应。
 
-- Keep versions in `config/versions.env`. Review upstream release notes, compatibility requirements, and data migration steps before upgrading.
+- Keep deployment component versions in `config/versions.env`. Review upstream release notes, compatibility requirements, and data migration steps before upgrading.
 - Put component settings in `config/helm/` and integration resources in `manifests/`. Keep real credentials out of the repository.
 - Use UTF-8 and LF line endings. Keep commands, paths, and operating limits consistent between the Chinese and English documentation.
+
+Helm 3 的安全修复支持将于 [2027-02-10 结束](https://helm.sh/blog/helm-v3-end-of-life/)。迁移到 Helm 4 时，同步验证脚本与 CI，并更新安装说明。
+
+Helm 3 [security support ends on 2027-02-10](https://helm.sh/blog/helm-v3-end-of-life/). A move to Helm 4 should update the installation guidance and validate the scripts and CI together.
 
 ## Issue 与 PR / Issues and pull requests
 

@@ -10,8 +10,14 @@
 
 - 主机初始化入口面向 **Ubuntu 22.04 / 24.04**，需要 `sudo`，会修改 swap、内核参数、软件源和容器运行时。
 - 准备 Bash、`curl`、Python 3、`ip`（iproute2），以及可访问的软件仓库、镜像仓库、Helm 仓库和模型下载源。国内网络选项仅替换 kubeadm 使用的镜像仓库，不覆盖所有下载。
-- 平台部署需要可访问集群的 `kubectl` 和 **Helm 3**。按 [Helm 官方说明](https://helm.sh/docs/intro/install/)安装，并先检查下载内容与版本。
+- 平台部署需要可访问集群的 `kubectl` 和与 Kubernetes 1.35 兼容的 **Helm 3**。推荐使用 CI 固定的 [v3.22.1](https://github.com/helm/helm/releases/tag/v3.22.1)，按 [Helm 3 官方安装说明](https://helm.sh/docs/v3/intro/install/)选择对应系统和架构的 release 安装包，并核对下载内容；使用包管理器时也需显式指定版本。
 - 给指标、日志和模型预留资源。可从 8 核 CPU、16 GB 内存、100 GB 可用 SSD 空间规划实验机；这不是经过负载测试的容量保证，模型大小与数据保留期会改变实际用量。
+
+安装 Helm 后先核对版本；使用推荐版本时，输出应以 `v3.22.1` 开头。选择其他版本前，先确认[官方 Kubernetes 兼容范围](https://helm.sh/docs/v3/topics/version_skew/)覆盖本项目的 Kubernetes 1.35。
+
+```bash
+helm version --short
+```
 
 复用已按本仓库配置的集群时，可跳过主机初始化，先核对版本、权限与现有组件。部署和验证流程预期使用 Calico 与 Local Path Provisioner；其他网络、存储或多节点拓扑需要自行适配。请先阅读[架构中的取舍](docs/architecture.md#单节点的取舍)。
 

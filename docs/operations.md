@@ -134,9 +134,11 @@ kubectl get events -A --sort-by=.metadata.creationTimestamp
 helm list -A
 ```
 
-验证脚本检查节点、存储类、相关命名空间的 Pod、Helm release、K8sGPT 配置及模型可用性，也会检查关键 Deployment、StatefulSet 和 DaemonSet 是否存在且完成更新。任何一项失败都需要处理；API 无法访问、空 Pod 列表或运行中但未就绪的 Pod 不应视为成功。检查通过不代表已验证指标和日志的实际传输或诊断质量。
+验证脚本检查节点、存储类、相关命名空间的 Pod、Helm release、监控资源的调谐状态、K8sGPT 配置及模型可用性，也会检查关键 Deployment、StatefulSet 和 DaemonSet 是否存在且完成更新。任何一项失败都需要处理；API 无法访问、空 Pod 列表或运行中但未就绪的 Pod 不应视为成功。检查通过不代表已验证指标和日志的实际传输或诊断质量。
 
 在有完整控制器检查的平台命名空间中，保留的失败 Pod 和正在删除的旧 Pod 会显示警告，不计入当前活动实例；仍必须存在当前实例，且对应控制器全部就绪。`kube-system`、Calico 和本地存储等基础设施命名空间保持严格检查。
+
+监控配置由 VictoriaMetrics Operator 应用。部署时，脚本先等待 VMSingle、VMAgent、VMAlert 和 VMAlertmanager 的 `status.observedGeneration` 与当前 `metadata.generation` 一致，且 `status.updateStatus` 为 `operational`，再检查工作负载更新。独立验证也要求这两项状态成立；旧工作负载 Ready 不能代替新配置应用成功。等待超时时，查看对应资源的状态、事件和 Operator 日志。例如用 `kubectl describe vmsingle vm -n monitoring` 检查指标存储；修改 PVC 容量前还需确认存储类是否支持扩容。
 
 重新部署 K8sGPT 时，脚本先等待分析器模板中的模型、后端、服务地址和镜像与当前 K8sGPT 资源一致，再等待滚动更新。旧 Deployment 显示 Ready 并不表示 Operator 已应用新配置；配置等待超时时，先检查 Operator 日志和资源事件，再决定重试。
 

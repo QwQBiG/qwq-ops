@@ -48,6 +48,11 @@ case "$*" in
     'get nodes '*) printf '%s\n' "${FAKE_NODES-node|True}" ;;
     'get pods -n logging '*) printf '%s\n' "${LOGGING_PODS-${FAKE_PODS-pod|Running||True}}" ;;
     'get pods '*) printf '%s\n' "${FAKE_PODS-pod|Running||True}" ;;
+    'get vmsingle/vm '*|'get vmagent/vm '*|'get vmalert/vm '*|'get vmalertmanager/vm '*)
+        [[ ${MISSING_MONITORING_RESOURCE:-} != "$2" ]] || exit 47
+        if [[ $* == *status.observedGeneration* ]]; then
+            printf '%s' "${MONITORING_STATUS-2|2|operational}"
+        else printf '%s' "${MONITORING_GENERATION-2}"; fi ;;
     'get k8sgpt '*)
         [[ -z ${FAIL_K8SGPT_CONFIG:-} ]] || exit 45
         get_k8sgpt_config ;;
@@ -151,7 +156,8 @@ class DeploymentTests(unittest.TestCase):
         result, commands = self.run_script(
             "deploy.sh", "--model", "tinyllama:latest", K8SGPT_VERSION="v0.4.42", WAIT_TIMEOUT="17s")
         self.assertEqual(result.returncode, 0, result.stderr)
-        waits = [line for line in commands.splitlines() if "wait --for=jsonpath=" in line]
+        waits = [line for line in commands.splitlines()
+                 if "wait --for=jsonpath=" in line and " deployment/k8sgpt " in line]
         self.assertEqual(len(waits), 4)
         for expected in ("K8SGPT_MODEL", "tinyllama:latest", "K8SGPT_BACKEND", "localai",
                          "K8SGPT_BASEURL", "http://ollama.ai.svc.cluster.local:11434/v1",
@@ -168,6 +174,38 @@ class DeploymentTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 46, result.stderr)
                 self.assertNotIn("rollout status deployment/k8sgpt", commands)
                 self.assertNotIn("checks passed", result.stdout)
+
+    def test_installation_waits_for_current_monitoring_resources_before_rollouts(self):
+        result, commands = self.run_script("deploy.sh", WAIT_TIMEOUT="17s")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        waits = [line for line in commands.splitlines()
+                 if "wait --for=jsonpath=" in line and " -n monitoring " in line]
+        self.assertEqual(len(waits), 8)
+        for resource in ("vmsingle/vm", "vmagent/vm", "vmalert/vm", "vmalertmanager/vm"):
+            matching = [line for line in waits if f" {resource} " in line]
+            self.assertEqual(len(matching), 2, resource)
+            self.assertIn("{.status.observedGeneration}=2", matching[0])
+            self.assertIn("{.status.updateStatus}=operational", matching[1])
+            self.assertTrue(all("--timeout=17s" in line for line in matching))
+        self.assertLess(commands.index(waits[-1]), commands.index("rollout status deployment/vmsingle-vm"))
+
+    def test_installation_stops_for_unreconciled_monitoring_resources(self):
+        for field in (".status.observedGeneration", ".status.updateStatus"):
+            with self.subTest(field=field):
+                self.log.unlink(missing_ok=True)
+                result, commands = self.run_script("deploy.sh", FAIL_CONFIG_WAIT=field)
+                self.assertEqual(result.returncode, 46, result.stderr)
+                self.assertNotIn("rollout status deployment/vmsingle-vm", commands)
+                self.assertNotIn("checks passed", result.stdout)
+
+    def test_installation_requires_a_readable_monitoring_generation(self):
+        for overrides in ({"MISSING_MONITORING_RESOURCE": "vmsingle/vm"},
+                          {"MONITORING_GENERATION": ""}):
+            with self.subTest(overrides=overrides):
+                self.log.unlink(missing_ok=True)
+                result, commands = self.run_script("deploy.sh", **overrides)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("rollout status deployment/vmsingle-vm", commands)
 
     def test_verification_healthy_path_is_read_only(self):
         result, commands = self.run_script("verify.sh")
@@ -230,6 +268,23 @@ class DeploymentTests(unittest.TestCase):
                 result, _ = self.run_script("verify.sh", **{failure: "yes"})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Cannot read", result.stderr)
+
+    def test_verification_rejects_old_or_failed_monitoring_reconciliation(self):
+        for state in ("2|1|operational", "2|2|failed", "2|2|expanding"):
+            with self.subTest(state=state):
+                result, _ = self.run_script("verify.sh", MONITORING_STATUS=state)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("vmsingle/vm is not fully reconciled", result.stderr)
+
+    def test_verification_requires_every_monitoring_resource_status(self):
+        for resource in ("vmsingle/vm", "vmagent/vm", "vmalert/vm", "vmalertmanager/vm"):
+            with self.subTest(resource=resource):
+                result, _ = self.run_script("verify.sh", MISSING_MONITORING_RESOURCE=resource)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Cannot read monitoring/{resource}", result.stderr)
+        result, _ = self.run_script("verify.sh", MONITORING_STATUS="2||")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("incomplete reconciliation status", result.stderr)
 
     def test_verification_fails_without_diagnosis_workload(self):
         result, _ = self.run_script("verify.sh", MISSING_DIAGNOSIS="yes")
