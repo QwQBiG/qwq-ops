@@ -41,10 +41,10 @@ main() (
         fi
     done <<< "$classes"
 
-    local deployment
-    deployment=$(kube get deployment local-path-provisioner -n local-path-storage \
-        --ignore-not-found -o name)
-    if [[ -z $deployment ]]; then
+    local replicas
+    replicas=$(kube get deployment local-path-provisioner -n local-path-storage \
+        --ignore-not-found -o jsonpath='{.spec.replicas}')
+    if [[ -z $replicas ]]; then
         # Refuse to overwrite an existing class during a partial or custom installation.
         local existing_class
         existing_class=$(kube get storageclass local-path --ignore-not-found -o name)
@@ -57,6 +57,8 @@ main() (
             --output "$manifest"
         kube apply -f "$manifest"
     else
+        [[ $replicas =~ ^[1-9][0-9]*$ ]] ||
+            die "Existing Local Path Provisioner must have a positive replica count; inspect its configuration manually."
         log "Existing Local Path Provisioner found; preserving its configuration."
     fi
     kube rollout status deployment/local-path-provisioner -n local-path-storage --timeout="$WAIT_TIMEOUT"

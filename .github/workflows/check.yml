@@ -97,6 +97,60 @@ jobs:
             kubectl apply --server-side --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/serviceaccounts.yaml"
           fi
           kubectl apply --server-side --dry-run=server --field-manager=qwq-api-validation -f "$RUNNER_TEMP/qwq-api-resources/resources.yaml"
+      - name: Check analyzer configuration waits against the API
+        run: |
+          source scripts/lib/common.sh
+          source scripts/lib/k8sgpt.sh
+          python - "$RUNNER_TEMP/qwq-api-resources/resources.yaml" <<'PY' | kubectl apply -f -
+          import sys
+          import yaml
+          resources = yaml.safe_load_all(open(sys.argv[1], encoding="utf-8"))
+          integration = next(doc for doc in resources if doc and doc.get("kind") == "K8sGPT")
+          yaml.safe_dump(integration, sys.stdout)
+          PY
+          expected=$(k8sgpt_config)
+          mapfile -t target <<< "$expected"
+          # Exercise CLI configuration checks without an Operator or workload Pods.
+          kubectl apply -f - <<'YAML'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: k8sgpt
+            namespace: k8sgpt
+          spec:
+            replicas: 0
+            selector:
+              matchLabels:
+                app: configuration-check
+            template:
+              metadata:
+                labels:
+                  app: configuration-check
+              spec:
+                containers:
+                  - name: k8sgpt
+                    image: registry.invalid/k8sgpt:old
+          YAML
+          kubectl set env deployment/k8sgpt -n k8sgpt \
+            "K8SGPT_MODEL=${target[0]}" "K8SGPT_BACKEND=${target[1]}" "K8SGPT_BASEURL=${target[2]}"
+          expect_timeout() {
+            local output
+            if output=$(WAIT_TIMEOUT=1s k8sgpt_wait_config "$expected" 2>&1); then
+              printf 'An outdated or missing configuration unexpectedly passed\n' >&2
+              exit 1
+            fi
+            printf '%s\n' "$output"
+            [[ $output == *'timed out waiting for the condition'* ]] || {
+              printf 'Configuration wait failed before its timeout\n' >&2
+              exit 1
+            }
+          }
+          expect_timeout
+          kubectl set image deployment/k8sgpt -n k8sgpt "k8sgpt=${target[3]}"
+          WAIT_TIMEOUT=10s k8sgpt_wait_config "$expected"
+          [[ $(k8sgpt_template_config) == "$expected" ]]
+          kubectl set env deployment/k8sgpt -n k8sgpt K8SGPT_MODEL-
+          expect_timeout
       - name: Delete temporary cluster
         if: always()
         run: |

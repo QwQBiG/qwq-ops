@@ -36,6 +36,10 @@ KUBECTL = r'''#!/usr/bin/env bash
 printf 'kubectl|%s\n' "$*" >> "$COMMAND_LOG"
 [[ -z ${FAIL_KUBE:-} ]] || exit 43
 if [[ $1 == --request-timeout=* ]]; then shift; fi
+get_k8sgpt_config() {
+    if [[ -f $COMMAND_LOG.config ]]; then cat "$COMMAND_LOG.config"
+    else printf '%s' "${K8SGPT_CONFIG-qwen2.5:1.5b|localai|http://ollama.ai.svc.cluster.local:11434/v1|ghcr.io/k8sgpt-ai/k8sgpt|v0.4.41}"; fi
+}
 case "$*" in
     'cluster-info') ;;
     'get storageclass '*)
@@ -44,7 +48,14 @@ case "$*" in
     'get nodes '*) printf '%s\n' "${FAKE_NODES-node|True}" ;;
     'get pods -n logging '*) printf '%s\n' "${LOGGING_PODS-${FAKE_PODS-pod|Running||True}}" ;;
     'get pods '*) printf '%s\n' "${FAKE_PODS-pod|Running||True}" ;;
-    'get k8sgpt '*) printf 'qwen2.5:1.5b' ;;
+    'get k8sgpt '*)
+        [[ -z ${FAIL_K8SGPT_CONFIG:-} ]] || exit 45
+        get_k8sgpt_config ;;
+    'get deployment/k8sgpt '*'.spec.template.spec.containers'*)
+        [[ -z ${FAIL_K8SGPT_TEMPLATE:-} ]] || exit 45
+        IFS='|' read -r model backend base_url repository version <<< "$(get_k8sgpt_config)"
+        printf '%s\n' "${DEPLOYMENT_MODEL-$model}" "${DEPLOYMENT_BACKEND-$backend}" \
+            "${DEPLOYMENT_BASEURL-$base_url}" "${DEPLOYMENT_IMAGE-$repository:${version:-latest}}" ;;
     'get deployment/'*|'get statefulset/'*|'get daemonset/'*)
         if [[ $* == "get ${MISSING_WORKLOAD:-no-match} "* ]]; then exit 44; fi
         if [[ $* == *'/k8sgpt '* && -n ${MISSING_DIAGNOSIS:-} ]]; then exit; fi
@@ -53,8 +64,15 @@ case "$*" in
             printf '%s' "${DAEMONSET_STATUS:-1|1|1|1|1}"
         else printf '%s' "${WORKLOAD_STATUS:-1|1|1|1|1}"; fi ;;
     'exec '*) [[ -z ${FAIL_MODEL:-} ]] ;;
+    'wait --for=jsonpath='*)
+        [[ $* != *"${FAIL_CONFIG_WAIT:-no-match}"* ]] || exit 46 ;;
     'wait '*|'rollout status '*) ;;
-    'apply -f -') cat >/dev/null ;;
+    'apply -f -')
+        manifest=$(cat)
+        model=$(sed -n 's/^    model: "\(.*\)"/\1/p' <<< "$manifest")
+        version=$(sed -n 's/^  version: "\(.*\)"/\1/p' <<< "$manifest")
+        printf '%s|localai|http://ollama.ai.svc.cluster.local:11434/v1|ghcr.io/k8sgpt-ai/k8sgpt|%s' \
+            "$model" "$version" > "$COMMAND_LOG.config" ;;
     'apply -f '*) ;;
     *) printf 'Unexpected kubectl command: %s\n' "$*" >&2; exit 64 ;;
 esac
@@ -129,6 +147,28 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("apply -f -", commands)
         self.assertIn("checks passed", result.stdout)
 
+    def test_installation_waits_for_the_selected_analyzer_configuration(self):
+        result, commands = self.run_script(
+            "deploy.sh", "--model", "tinyllama:latest", K8SGPT_VERSION="v0.4.42", WAIT_TIMEOUT="17s")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        waits = [line for line in commands.splitlines() if "wait --for=jsonpath=" in line]
+        self.assertEqual(len(waits), 4)
+        for expected in ("K8SGPT_MODEL", "tinyllama:latest", "K8SGPT_BACKEND", "localai",
+                         "K8SGPT_BASEURL", "http://ollama.ai.svc.cluster.local:11434/v1",
+                         "ghcr.io/k8sgpt-ai/k8sgpt:v0.4.42", "--timeout=17s"):
+            self.assertIn(expected, "\n".join(waits))
+        self.assertLess(commands.index("apply -f -"), commands.index(waits[0]))
+        self.assertLess(commands.index(waits[-1]), commands.index("rollout status deployment/k8sgpt"))
+
+    def test_installation_stops_when_the_operator_keeps_an_old_configuration(self):
+        for field in ("K8SGPT_MODEL", "K8SGPT_BACKEND", "K8SGPT_BASEURL", "].image}"):
+            with self.subTest(field=field):
+                self.log.unlink(missing_ok=True)
+                result, commands = self.run_script("deploy.sh", FAIL_CONFIG_WAIT=field)
+                self.assertEqual(result.returncode, 46, result.stderr)
+                self.assertNotIn("rollout status deployment/k8sgpt", commands)
+                self.assertNotIn("checks passed", result.stdout)
+
     def test_verification_healthy_path_is_read_only(self):
         result, commands = self.run_script("verify.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -166,6 +206,30 @@ class DeploymentTests(unittest.TestCase):
         result, _ = self.run_script("verify.sh", FAIL_MODEL="yes")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot load", result.stderr)
+
+    def test_verification_rejects_stale_analyzer_configuration_despite_ready_replicas(self):
+        for field, value in (("DEPLOYMENT_MODEL", "old:latest"),
+                             ("DEPLOYMENT_BACKEND", "openai"),
+                             ("DEPLOYMENT_BASEURL", "http://old:11434/v1"),
+                             ("DEPLOYMENT_IMAGE", "ghcr.io/k8sgpt-ai/k8sgpt:v0.4.40"),
+                             ("DEPLOYMENT_MODEL", "")):
+            with self.subTest(field=field, value=value):
+                result, _ = self.run_script("verify.sh", **{field: value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not match its integration", result.stderr)
+
+    def test_verification_reads_the_current_integration_instead_of_version_defaults(self):
+        config = ("tinyllama:latest|localai|http://ollama.ai.svc.cluster.local:11434/v1|"
+                  "ghcr.io/k8sgpt-ai/k8sgpt|v0.4.42")
+        result, _ = self.run_script("verify.sh", K8SGPT_CONFIG=config)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_verification_fails_for_unreadable_analyzer_configuration(self):
+        for failure in ("FAIL_K8SGPT_CONFIG", "FAIL_K8SGPT_TEMPLATE"):
+            with self.subTest(failure=failure):
+                result, _ = self.run_script("verify.sh", **{failure: "yes"})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Cannot read", result.stderr)
 
     def test_verification_fails_without_diagnosis_workload(self):
         result, _ = self.run_script("verify.sh", MISSING_DIAGNOSIS="yes")
@@ -224,3 +288,26 @@ class DeploymentTests(unittest.TestCase):
         result, _ = self.run_script("verify.sh", DAEMONSET_STATUS="2|2|2|1|2")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("daemonset/alloy is not fully rolled out", result.stderr)
+
+    def test_retained_platform_pods_do_not_hide_a_recovered_controller(self):
+        for retained in ("old|Failed||False", "old|Running|2026-11-16T00:00:00Z|False"):
+            with self.subTest(retained=retained):
+                result, _ = self.run_script(
+                    "verify.sh", LOGGING_PODS="current|Running||True\n" + retained)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("retained Pod", result.stderr)
+
+    def test_retained_platform_pods_alone_are_not_healthy(self):
+        result, _ = self.run_script("verify.sh", LOGGING_PODS="old|Failed||False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("logging has no active Pods", result.stderr)
+
+    def test_retained_infrastructure_pods_remain_failures(self):
+        result, _ = self.run_script("verify.sh", FAKE_PODS="current|Running||True\nold|Failed||False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("kube-system/old", result.stderr)
+
+    def test_pending_platform_pods_remain_failures(self):
+        result, _ = self.run_script("verify.sh", LOGGING_PODS="current|Pending||False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("logging/current: phase=Pending", result.stderr)
