@@ -7,6 +7,8 @@ source "$ROOT/config/versions.env"
 source "$ROOT/scripts/lib/common.sh"
 # shellcheck source=lib/k8sgpt.sh
 source "$ROOT/scripts/lib/k8sgpt.sh"
+# shellcheck source=lib/monitoring.sh
+source "$ROOT/scripts/lib/monitoring.sh"
 
 usage() {
     cat <<'EOF'
@@ -100,6 +102,9 @@ else
     kube apply -f "$ROOT/manifests/integrations/grafana-loki.yaml"
     integration | kube apply -f -
     # Helm cannot wait for workloads created later by an operator.
+    while read -r resource; do
+        monitoring_wait_ready "$resource"
+    done < <(monitoring_resources)
     for workload in deployment/vmsingle-vm deployment/vmagent-vm deployment/vmalert-vm statefulset/vmalertmanager-vm; do
         wait_workload monitoring "$workload"
     done

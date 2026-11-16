@@ -134,9 +134,11 @@ kubectl get events -A --sort-by=.metadata.creationTimestamp
 helm list -A
 ```
 
-Verification checks nodes, storage classes, Pods in the relevant namespaces, Helm releases, K8sGPT configuration, and model availability. It also checks that key Deployments, StatefulSets, and DaemonSets exist and have completed their rollouts. Investigate every failed check; API failures, empty Pod lists, and running Pods that are not ready must not count as success. Passing does not verify actual metric and log delivery or diagnosis quality.
+Verification checks nodes, storage classes, Pods in the relevant namespaces, Helm releases, monitoring resource reconciliation, K8sGPT configuration, and model availability. It also checks that key Deployments, StatefulSets, and DaemonSets exist and have completed their rollouts. Investigate every failed check; API failures, empty Pod lists, and running Pods that are not ready must not count as success. Passing does not verify actual metric and log delivery or diagnosis quality.
 
 In platform namespaces covered by the full controller inventory, retained failed Pods and old Pods being deleted produce warnings and do not count as current instances. Current instances must still exist and all corresponding controllers must be ready. Infrastructure namespaces such as `kube-system`, Calico, and local storage retain strict Pod checks.
+
+The VictoriaMetrics Operator applies monitoring configuration. Before checking workload rollouts, deployment waits for VMSingle, VMAgent, VMAlert, and VMAlertmanager to report `status.observedGeneration` equal to the current `metadata.generation` and `status.updateStatus` set to `operational`. Independent verification requires both as well; an old workload being Ready does not establish that new configuration was applied. If the wait times out, inspect the resource status, events, and Operator logs. For example, use `kubectl describe vmsingle vm -n monitoring` to inspect metric storage. Before changing PVC capacity, also check whether the storage class supports expansion.
 
 During K8sGPT redeployment, the script first waits for the analyzer template's model, backend, service URL, and image to match the current K8sGPT resource, then waits for the rollout. An old Deployment being Ready does not mean the Operator has applied new configuration. If that configuration wait times out, inspect Operator logs and resource events before retrying.
 

@@ -7,6 +7,8 @@ source "$ROOT/config/versions.env"
 source "$ROOT/scripts/lib/common.sh"
 # shellcheck source=lib/k8sgpt.sh
 source "$ROOT/scripts/lib/k8sgpt.sh"
+# shellcheck source=lib/monitoring.sh
+source "$ROOT/scripts/lib/monitoring.sh"
 
 case "${1:-}" in
     --help|-h)
@@ -161,7 +163,22 @@ else
     fail 'Cannot read the K8sGPT integration'
 fi
 
-# Check rollout state after confirming the analyzer's desired Pod template.
+while read -r resource; do
+    if ! state=$(monitoring_state "$resource"); then
+        fail "Cannot read monitoring/$resource reconciliation status"
+    elif [[ ! $state =~ ^[0-9]+\|[0-9]+\|[a-z]+$ ]]; then
+        fail "monitoring/$resource has incomplete reconciliation status"
+    else
+        IFS='|' read -r generation observed update_status <<< "$state"
+        if ((generation > 0 && observed == generation)) && [[ $update_status == operational ]]; then
+            log "monitoring/$resource: generation $generation operational"
+        else
+            fail "monitoring/$resource is not fully reconciled (status $state)"
+        fi
+    fi
+done < <(monitoring_resources)
+
+# Check rollout state after confirming the Operator-managed configurations.
 while read -r namespace workload; do
     check_workload "$namespace" "$workload"
 done < <(managed_workloads)
