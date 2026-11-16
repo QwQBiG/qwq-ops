@@ -75,7 +75,54 @@ kubectl get secret -n monitoring grafana -o jsonpath='{.data.admin-password}' | 
 kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode
 ```
 
-首次登录后更改密码。Argo CD 初始密码 Secret 可能已被管理员删除，此时使用现有凭据或按上游恢复流程处理。远程使用时，通过 SSH 隧道访问端口转发所在主机；需要长期对外服务时，先设计 TLS、认证和访问控制。
+首次登录后更改密码；Grafana 还需要按下述步骤同步凭据。Argo CD 初始密码 Secret 可能已被管理员删除，此时使用现有凭据或按上游恢复流程处理。远程使用时，通过 SSH 隧道访问端口转发所在主机；需要长期对外服务时，先设计 TLS、认证和访问控制。
+
+### 修改 Grafana 管理员密码
+
+先准备一个长随机 ASCII 密码，再在 Grafana 界面中修改 `admin` 的密码，保留用户名。使用英文字母、数字和 ASCII 符号，以兼容固定 sidecar 客户端的 [Basic Authentication 密码编码](https://github.com/psf/requests/blob/v2.32.5/src/requests/auth.py#L51-L55)。Grafana 的配置 sidecar 使用 `monitoring/grafana` Secret 中的凭据调用需要 Basic Authentication 的 [reload 接口](https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/admin/#reload-provisioning-configurations)。界面改密后，需要把同一密码同步到 Secret，再重启 Grafana，否则 sidecar 会继续使用旧密码并收到 `401`。单独修改 Secret 也不会更新数据库中已有管理员的密码；[`admin_password` 只在首次启动时设置](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password)。
+
+在目标 Linux 主机的交互终端执行下面命令，提示时输入刚在界面设置的新密码。密码不会显示，也不会写入命令参数或历史；补丁只更新 `admin-password`，保留 `admin-user` 和 Secret 的元数据。输入为空、含非 ASCII 字符或两次不一致时会停止；若已经设置了非 ASCII 密码，先在界面换成兼容的密码再重试。重启会短暂中断 Grafana，并结束已有的端口转发。
+
+```bash
+(
+set -euo pipefail
+python3 - <<'PY' | kubectl patch secret grafana -n monitoring --type=merge --patch-file=/dev/stdin
+import base64
+import getpass
+import json
+import sys
+
+password = getpass.getpass("Grafana password just set in the UI: ")
+if not password.isascii():
+    sys.exit("First set an ASCII password in the Grafana UI, then retry; Secret unchanged.")
+if not password or password != getpass.getpass("Repeat password: "):
+    sys.exit("Passwords are empty or do not match; Secret unchanged.")
+encoded = base64.b64encode(password.encode("ascii")).decode("ascii")
+print(json.dumps({"data": {"admin-password": encoded}}))
+PY
+kubectl rollout restart deployment/grafana -n monitoring
+kubectl rollout status deployment/grafana -n monitoring --timeout=300s
+)
+```
+
+滚动更新成功后，重新运行本节中的 Grafana 端口转发，退出并用新密码登录。然后用两个 sidecar 当前加载的凭据分别调用 reload 接口；下面命令应各输出一次 `200`。若出现 `401`，检查界面密码、Secret 和重建后的 Pod 是否一致。
+
+```bash
+(
+set -e
+for container in grafana-sc-datasources grafana-sc-dashboard; do
+    kubectl exec -i -n monitoring deployment/grafana -c "$container" -- python - <<'PY'
+import os
+import requests
+
+response = requests.post(os.environ["REQ_URL"],
+                         auth=(os.environ["REQ_USERNAME"], os.environ["REQ_PASSWORD"]), timeout=30)
+response.raise_for_status()
+print(response.status_code)
+PY
+done
+)
+```
 
 ## 验证与排障
 
@@ -89,10 +136,15 @@ helm list -A
 
 验证脚本检查节点、存储类、相关命名空间的 Pod、Helm release、K8sGPT 配置及模型可用性，也会检查关键 Deployment、StatefulSet 和 DaemonSet 是否存在且完成更新。任何一项失败都需要处理；API 无法访问、空 Pod 列表或运行中但未就绪的 Pod 不应视为成功。检查通过不代表已验证指标和日志的实际传输或诊断质量。
 
+在有完整控制器检查的平台命名空间中，保留的失败 Pod 和正在删除的旧 Pod 会显示警告，不计入当前活动实例；仍必须存在当前实例，且对应控制器全部就绪。`kube-system`、Calico 和本地存储等基础设施命名空间保持严格检查。
+
+重新部署 K8sGPT 时，脚本先等待分析器模板中的模型、后端、服务地址和镜像与当前 K8sGPT 资源一致，再等待滚动更新。旧 Deployment 显示 Ready 并不表示 Operator 已应用新配置；配置等待超时时，先检查 Operator 日志和资源事件，再决定重试。
+
 | 现象 | 先检查什么 |
 | --- | --- |
 | Pod `Pending` | `kubectl describe pod -n <namespace> <pod>` 中的调度事件、可分配内存和 PVC |
 | PVC `Pending` | `kubectl get storageclass` 与 `kubectl describe pvc -n <namespace> <pvc>`；local-path 通常等消费者调度后才绑定 |
+| 存储脚本拒绝副本数 | 检查 `local-path-storage/local-path-provisioner` Deployment 是否曾因维护缩容到 0；脚本不会自动扩容，需确认配置后由操作者恢复 |
 | `ImagePullBackOff` | Pod 事件中的镜像地址、仓库连通性和凭据 |
 | `CrashLoopBackOff` | `kubectl logs -n <namespace> <pod> --all-containers --previous` 与当前日志 |
 | Helm 失败或超时 | `helm status -n <namespace> <release>` 和相关 Pod 事件，修复原因后再决定重试或回滚 |

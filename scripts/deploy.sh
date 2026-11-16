@@ -5,6 +5,8 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/config/versions.env"
 # shellcheck source=lib/common.sh
 source "$ROOT/scripts/lib/common.sh"
+# shellcheck source=lib/k8sgpt.sh
+source "$ROOT/scripts/lib/k8sgpt.sh"
 
 usage() {
     cat <<'EOF'
@@ -57,6 +59,14 @@ wait_workload() {
     kube rollout status "$workload" -n "$namespace" --timeout="$WAIT_TIMEOUT"
 }
 
+wait_k8sgpt() {
+    local config
+    kube wait --for=create deployment/k8sgpt -n k8sgpt --timeout="$WAIT_TIMEOUT"
+    config=$(k8sgpt_config) || die 'Cannot read the K8sGPT integration configuration'
+    k8sgpt_wait_config "$config"
+    kube rollout status deployment/k8sgpt -n k8sgpt --timeout="$WAIT_TIMEOUT"
+}
+
 if ! "$render"; then
     require_command kubectl
     kube cluster-info >/dev/null
@@ -93,7 +103,7 @@ else
     for workload in deployment/vmsingle-vm deployment/vmagent-vm deployment/vmalert-vm statefulset/vmalertmanager-vm; do
         wait_workload monitoring "$workload"
     done
-    wait_workload k8sgpt deployment/k8sgpt
+    wait_k8sgpt
     log 'Charts installed. Checking readiness and model availability.'
     bash "$ROOT/scripts/verify.sh"
 fi

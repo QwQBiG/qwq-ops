@@ -21,7 +21,8 @@ case "$1 $2" in
     'get --raw=/readyz') exit "${MOCK_API_FAILURE:-0}" ;;
     'get storageclasses') printf '%s' "${MOCK_CLASSES:-}" ;;
     'get deployment')
-        [[ ${MOCK_DEPLOYMENT:-} != present ]] || printf 'deployment.apps/local-path-provisioner\n'
+        [[ ${MOCK_DEPLOYMENT_FAILURE:-0} == 0 ]] || exit "$MOCK_DEPLOYMENT_FAILURE"
+        [[ ${MOCK_DEPLOYMENT:-} != present ]] || printf '%s\n' "${MOCK_REPLICAS:-1}"
         ;;
     'get storageclass')
         if [[ $* != *--ignore-not-found* ]]; then printf 'local-path\n'; fi
@@ -67,6 +68,31 @@ exit 99
         calls = self.commands()
         self.assertLess(calls.index("apply -f"), calls.index("rollout status"))
         self.assertLess(calls.index("rollout status"), calls.index("annotate storageclass"))
+
+    def test_zero_or_invalid_replicas_stop_before_storage_changes(self):
+        for replicas in ("0", "-1", "invalid", "1.5"):
+            with self.subTest(replicas=replicas):
+                result = self.run_storage(MOCK_REPLICAS=replicas)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("positive replica count", result.stderr)
+                self.assertNotIn("apply -f", self.commands())
+                self.assertNotIn("rollout status", self.commands())
+                self.assertNotIn("annotate storageclass", self.commands())
+                self.assertNotIn("scale", self.commands())
+
+    def test_existing_multiple_replicas_preserve_configuration(self):
+        result = self.run_storage(MOCK_REPLICAS="2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("apply -f", self.commands())
+        self.assertNotIn("scale", self.commands())
+        self.assertIn("annotate storageclass local-path", self.commands())
+
+    def test_deployment_query_failure_stops_before_storage_changes(self):
+        result = self.run_storage(MOCK_DEPLOYMENT_FAILURE="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("apply -f", self.commands())
+        self.assertNotIn("rollout status", self.commands())
+        self.assertNotIn("annotate storageclass", self.commands())
 
     def test_other_default_class_is_not_changed(self):
         for annotations in ("true|", "|true"):

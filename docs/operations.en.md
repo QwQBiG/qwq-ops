@@ -75,7 +75,54 @@ kubectl get secret -n monitoring grafana -o jsonpath='{.data.admin-password}' | 
 kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode
 ```
 
-Change passwords after the first login. An administrator may already have removed the Argo CD initial password Secret; use existing credentials or the upstream recovery procedure in that case. For remote access, use an SSH tunnel to the host running port-forward. Design TLS, authentication, and access control before exposing a persistent service.
+Change passwords after the first login; Grafana also needs the credential sync below. An administrator may already have removed the Argo CD initial password Secret; use existing credentials or the upstream recovery procedure in that case. For remote access, use an SSH tunnel to the host running port-forward. Design TLS, authentication, and access control before exposing a persistent service.
+
+### Changing the Grafana admin password
+
+Prepare a long random ASCII password, then change the password for `admin` in the Grafana UI, keeping the username. Use English letters, digits, and ASCII symbols to match the fixed sidecar client's [Basic Authentication password encoding](https://github.com/psf/requests/blob/v2.32.5/src/requests/auth.py#L51-L55). Grafana's provisioning sidecars use credentials from the `monitoring/grafana` Secret to call [reload endpoints that require Basic Authentication](https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/admin/#reload-provisioning-configurations). After changing the UI password, sync the same password to the Secret and restart Grafana. Otherwise, the sidecars keep using the old password and receive `401` responses. Changing only the Secret does not update the existing administrator's database password; [`admin_password` is set only on first run](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password).
+
+Run the following in an interactive terminal on the target Linux host, entering the password just set in the UI. Input is hidden and stays out of command arguments and history. The patch updates only `admin-password`, preserving `admin-user` and the Secret's metadata. Empty, non-ASCII, or mismatched input stops the operation. If you already set a non-ASCII password, change it to a compatible password in the UI before retrying. The restart briefly interrupts Grafana and ends existing port-forward sessions.
+
+```bash
+(
+set -euo pipefail
+python3 - <<'PY' | kubectl patch secret grafana -n monitoring --type=merge --patch-file=/dev/stdin
+import base64
+import getpass
+import json
+import sys
+
+password = getpass.getpass("Grafana password just set in the UI: ")
+if not password.isascii():
+    sys.exit("First set an ASCII password in the Grafana UI, then retry; Secret unchanged.")
+if not password or password != getpass.getpass("Repeat password: "):
+    sys.exit("Passwords are empty or do not match; Secret unchanged.")
+encoded = base64.b64encode(password.encode("ascii")).decode("ascii")
+print(json.dumps({"data": {"admin-password": encoded}}))
+PY
+kubectl rollout restart deployment/grafana -n monitoring
+kubectl rollout status deployment/grafana -n monitoring --timeout=300s
+)
+```
+
+After the rollout succeeds, restart the Grafana port-forward from this section, sign out, and sign in with the new password. Then call each reload endpoint using the credentials currently loaded by its sidecar. The commands below should each print `200`. A `401` means the UI password, Secret, or recreated Pod credentials still differ.
+
+```bash
+(
+set -e
+for container in grafana-sc-datasources grafana-sc-dashboard; do
+    kubectl exec -i -n monitoring deployment/grafana -c "$container" -- python - <<'PY'
+import os
+import requests
+
+response = requests.post(os.environ["REQ_URL"],
+                         auth=(os.environ["REQ_USERNAME"], os.environ["REQ_PASSWORD"]), timeout=30)
+response.raise_for_status()
+print(response.status_code)
+PY
+done
+)
+```
 
 ## Verification and troubleshooting
 
@@ -89,10 +136,15 @@ helm list -A
 
 Verification checks nodes, storage classes, Pods in the relevant namespaces, Helm releases, K8sGPT configuration, and model availability. It also checks that key Deployments, StatefulSets, and DaemonSets exist and have completed their rollouts. Investigate every failed check; API failures, empty Pod lists, and running Pods that are not ready must not count as success. Passing does not verify actual metric and log delivery or diagnosis quality.
 
+In platform namespaces covered by the full controller inventory, retained failed Pods and old Pods being deleted produce warnings and do not count as current instances. Current instances must still exist and all corresponding controllers must be ready. Infrastructure namespaces such as `kube-system`, Calico, and local storage retain strict Pod checks.
+
+During K8sGPT redeployment, the script first waits for the analyzer template's model, backend, service URL, and image to match the current K8sGPT resource, then waits for the rollout. An old Deployment being Ready does not mean the Operator has applied new configuration. If that configuration wait times out, inspect Operator logs and resource events before retrying.
+
 | Symptom | Start here |
 | --- | --- |
 | Pod `Pending` | Scheduling events from `kubectl describe pod -n <namespace> <pod>`, allocatable memory, and PVCs |
 | PVC `Pending` | `kubectl get storageclass` and `kubectl describe pvc -n <namespace> <pvc>`; local-path normally waits for a consumer to be scheduled before binding |
+| Storage setup rejects replica count | Check whether the `local-path-storage/local-path-provisioner` Deployment was scaled to zero for maintenance. The script does not scale it automatically; review the configuration before restoring it |
 | `ImagePullBackOff` | Image address, registry access, and credentials in Pod events |
 | `CrashLoopBackOff` | `kubectl logs -n <namespace> <pod> --all-containers --previous` and current logs |
 | Helm failure or timeout | `helm status -n <namespace> <release>` and Pod events; resolve the cause before choosing a retry or rollback |

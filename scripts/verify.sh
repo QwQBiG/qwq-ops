@@ -5,6 +5,8 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/config/versions.env"
 # shellcheck source=lib/common.sh
 source "$ROOT/scripts/lib/common.sh"
+# shellcheck source=lib/k8sgpt.sh
+source "$ROOT/scripts/lib/k8sgpt.sh"
 
 case "${1:-}" in
     --help|-h)
@@ -40,13 +42,18 @@ else
 fi
 
 check_pods() {
-    local namespace=$1 pods name phase deleting ready active=0 unhealthy=0
+    local namespace=$1 controller_checked=${2:-false}
+    local pods name phase deleting ready active=0 unhealthy=0
     if ! pods=$(kube get pods -n "$namespace" -o 'jsonpath={range .items[*]}{.metadata.name}{"|"}{.status.phase}{"|"}{.metadata.deletionTimestamp}{"|"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'); then
         fail "Cannot read Pods in $namespace"
         return
     fi
     while IFS='|' read -r name phase deleting ready; do
         [[ -n $name ]] || continue
+        if [[ $controller_checked == true && ( $phase == Failed || -n $deleting ) ]]; then
+            warn "$namespace/$name: retained Pod, phase=$phase deleting=${deleting:-no}; controller readiness is checked separately"
+            continue
+        fi
         if [[ $phase == Succeeded && -z $deleting ]]; then continue; fi
         active=$((active + 1))
         if [[ $phase != Running || $ready != True || -n $deleting ]]; then
@@ -61,8 +68,12 @@ check_pods() {
     fi
 }
 
-for namespace in kube-system tigera-operator calico-system local-path-storage monitoring logging argocd ai k8sgpt; do
+# Infrastructure does not have the complete controller inventory used below.
+for namespace in kube-system tigera-operator calico-system local-path-storage; do
     check_pods "$namespace"
+done
+for namespace in monitoring logging argocd ai k8sgpt; do
+    check_pods "$namespace" true
 done
 
 check_release() {
@@ -136,19 +147,24 @@ k8sgpt deployment/k8sgpt
 WORKLOADS
 }
 
-while read -r namespace workload; do
-    check_workload "$namespace" "$workload"
-done < <(managed_workloads)
-
-if model=$(kube get k8sgpt k8sgpt -n k8sgpt -o 'jsonpath={.spec.ai.model}'); then
-    if [[ -z $model ]]; then
-        fail 'K8sGPT has no configured model'
-    elif ! kube exec -n ai deployment/ollama -- ollama show "$model" >/dev/null; then
+if config=$(k8sgpt_config); then
+    if ! actual=$(k8sgpt_template_config); then
+        fail 'Cannot read the K8sGPT Deployment configuration'
+    elif [[ $actual != "$config" ]]; then
+        fail 'K8sGPT Deployment model/backend/baseUrl/image does not match its integration'
+    fi
+    model=${config%%$'\n'*}
+    if ! kube exec -n ai deployment/ollama -- ollama show "$model" >/dev/null; then
         fail "Ollama cannot load the configured K8sGPT model: $model"
     fi
 else
     fail 'Cannot read the K8sGPT integration'
 fi
+
+# Check rollout state after confirming the analyzer's desired Pod template.
+while read -r namespace workload; do
+    check_workload "$namespace" "$workload"
+done < <(managed_workloads)
 
 ((failures == 0)) || die "$failures checks failed; inspect kubectl describe and workload logs before retrying"
 log 'All requested checks passed. This checks resource readiness and model availability, not diagnosis quality.'
