@@ -84,4 +84,8 @@ This revision also changes log collection and component configuration. Back up P
 
 Run development checks with `bash scripts/check.sh`. See [Contributing](CONTRIBUTING.md) for dependencies and submission requirements.
 
-When opening an [issue](https://github.com/QwQBiG/qwq-ops/issues), include the command, exit code, versions, and redacted logs. Refer to each upstream project for its capabilities, compatibility requirements, and license.
+When opening an [issue](https://github.com/QwQBiG/qwq-ops/issues), include the command, exit code, versions, and redacted logs. Refer to each upstream project for its capabilities and compatibility requirements.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE). Upstream components installed by the deployment scripts retain their own licenses.
