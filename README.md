@@ -84,4 +84,8 @@ qwq-ops/
 
 开发检查入口是 `bash scripts/check.sh`。安装依赖与提交要求见[参与维护](CONTRIBUTING.md)。
 
-遇到问题时，在 [issue](https://github.com/QwQBiG/qwq-ops/issues) 中提供执行命令、退出码、版本和已脱敏日志。上游组件的能力、兼容性与许可证以各自项目为准。
+遇到问题时，在 [issue](https://github.com/QwQBiG/qwq-ops/issues) 中提供执行命令、退出码、版本和已脱敏日志。上游组件的能力和兼容性以各自项目为准。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE)。通过部署脚本安装的上游组件适用各自的许可证。
