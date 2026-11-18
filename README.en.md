@@ -57,6 +57,7 @@ qwq-ops/
 │   ├── versions.env         # Pinned versions
 │   └── helm/                # Component-specific Helm values
 ├── manifests/               # Integration resources
+├── examples/                # Optional lab exercises
 ├── tests/                   # Checks that do not need a real cluster
 ├── docs/                    # Chinese and English guides
 ├── .github/workflows/       # Automated checks

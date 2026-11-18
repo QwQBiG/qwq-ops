@@ -50,6 +50,17 @@ kubectl exec -n ai deploy/ollama -- ollama pull qwen2.5:1.5b
 
 If you selected another model, replace the model name in this command with your selection. `ollama pull` downloads or updates the local model without changing K8sGPT's selection.
 
+### Run Ollama on an NVIDIA GPU
+
+Ollama uses the CPU by default. If your lab node already has the NVIDIA drivers, runtime support, and device plugin, you can request one GPU for Ollama. Check for a positive `nvidia.com/gpu` count under `Allocatable` in the node description, then deploy. See the [Kubernetes GPU scheduling guide](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) for the prerequisites.
+
+```bash
+kubectl describe nodes
+bash scripts/deploy.sh --nvidia-gpu
+```
+
+Pass the flag again on later deployments to keep GPU mode. Omit it to return to CPU mode. If the node advertises a GPU but the Ollama Pod stays `Pending`, check scheduling events and whether the GPU is already in use. If your cluster requires a RuntimeClass, set `runtimeClassName` in `config/helm/ollama.yaml` to the class configured in your cluster. With a model loaded, run `ollama ps` in the Ollama container to check whether it uses the CPU or GPU.
+
 ## Accessing services
 
 Run each port-forward command below in a separate terminal. Stop it with `Ctrl+C`. The default listener is the local loopback interface.
@@ -168,6 +179,19 @@ kubectl describe results -n k8sgpt
 Assess K8sGPT findings alongside events and application logs; findings do not trigger automatic repairs. If results are missing, inspect Operator, analyzer Pod, and Ollama logs. Confirm that the model is loaded, the service is reachable, and the integration selects the same model.
 
 The monitoring stack includes rule evaluation and Alertmanager, but this repository does not configure external recipients. Configure receivers and credentials, then test both firing and resolved notifications. Third-party chat robots may not accept Alertmanager's generic Webhook payload; use a receiver or adapter that implements the channel's protocol.
+
+On a lab cluster, use a temporary rule to check that VMAlert delivers an alert to Alertmanager. If you have configured external receivers, check where the test alert will be routed before creating the rule.
+
+```bash
+kubectl create -f examples/alerting/smoke-rule.yaml
+kubectl port-forward -n monitoring svc/vmalertmanager-vm 9093:9093
+```
+
+Open `http://127.0.0.1:9093` and look for `QwqOpsSmokeTest` after VMAlert loads and evaluates the rule. The rule uses a constant expression so you can check alert delivery independently. Metric collection and external notifications need separate checks. Press `Ctrl+C` to stop port forwarding, then remove the temporary rule.
+
+```bash
+kubectl delete vmrule qwq-ops-alert-smoke -n monitoring
+```
 
 ## Existing installations and upgrades
 

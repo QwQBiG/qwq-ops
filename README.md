@@ -57,6 +57,7 @@ qwq-ops/
 │   ├── versions.env         # 固定版本
 │   └── helm/                # 按组件拆分的 Helm values
 ├── manifests/               # 跨组件集成资源
+├── examples/                # 按需运行的实验示例
 ├── tests/                   # 无需真实集群的回归检查
 ├── docs/                    # 中英文架构与操作手册
 ├── .github/workflows/       # 自动检查

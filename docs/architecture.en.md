@@ -45,6 +45,7 @@ Ollama stores models on a PVC, using the cached model on startup and downloading
 | `config/versions.env` | Pinned software and Helm chart versions |
 | `config/helm/` | Separate Helm values for each component |
 | `manifests/` | Project-maintained Kubernetes resources and integrations |
+| `examples/` | Optional lab resources, such as the temporary alert rule |
 | `tests/` | Regression checks that do not require a real cluster |
 | `.github/workflows/` | Automated checks for commits and pull requests |
 | `docs/` | Architecture and operations documentation in Chinese and English |

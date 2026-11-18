@@ -45,6 +45,7 @@ Ollama 将模型保存在 PVC 中，启动时优先使用已有模型，缺失�
 | `config/versions.env` | 软件与 Helm chart 的固定版本 |
 | `config/helm/` | 按组件拆分的 Helm values |
 | `manifests/` | 由项目维护的 Kubernetes 资源与集成配置 |
+| `examples/` | 按需应用的实验资源，如临时告警规则 |
 | `tests/` | 不需要真实集群的回归检查 |
 | `.github/workflows/` | 在提交和 PR 上执行的自动检查 |
 | `docs/` | 架构说明和操作手册，中文与英文对应维护 |
