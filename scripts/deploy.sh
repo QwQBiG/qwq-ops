@@ -12,19 +12,22 @@ source "$ROOT/scripts/lib/monitoring.sh"
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/deploy.sh [--model MODEL] [--render]
+Usage: bash scripts/deploy.sh [--model MODEL] [--nvidia-gpu] [--render]
 Install the pinned platform charts using the current kubeconfig.
   --model MODEL  Use this model for both Ollama and K8sGPT.
+  --nvidia-gpu   Request one NVIDIA GPU for Ollama.
   --render       Print manifests without connecting to a cluster; downloads charts.
   --help         Show this help without changing anything.
 EOF
 }
 
 render=false
+nvidia_gpu=false
 while (($#)); do
     case "$1" in
         --help|-h) usage; exit 0 ;;
         --render) render=true; shift ;;
+        --nvidia-gpu) nvidia_gpu=true; shift ;;
         --model)
             (($# >= 2)) || die '--model requires a value'
             OLLAMA_MODEL=$2; shift 2 ;;
@@ -34,6 +37,11 @@ done
 [[ $OLLAMA_MODEL =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$ ]] || die 'Invalid model name'
 [[ $K8SGPT_VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Invalid K8sGPT version'
 require_command helm
+
+ollama_args=(--set-string "extraEnv[0].value=$OLLAMA_MODEL")
+if "$nvidia_gpu"; then
+    ollama_args+=(--set ollama.gpu.enabled=true --set ollama.gpu.type=nvidia --set ollama.gpu.number=1)
+fi
 
 chart() {
     local release=$1 namespace=$2 name=$3 repository=$4 version=$5 values=$6
@@ -72,6 +80,11 @@ wait_k8sgpt() {
 if ! "$render"; then
     require_command kubectl
     kube cluster-info >/dev/null
+    if "$nvidia_gpu"; then
+        gpu_capacity=$(kube get nodes -o 'jsonpath={range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}')
+        [[ $gpu_capacity =~ (^|[[:space:]])[1-9][0-9]*($|[[:space:]]) ]] ||
+            die 'No node advertises allocatable nvidia.com/gpu. Check the NVIDIA device plugin before deploying.'
+    fi
     # The former loki-stack chart has a different storage schema and workload.
     existing=$(helm list --namespace logging --filter '^loki$' --all --output json)
     [[ $existing != *'loki-stack-'* ]] || die 'Migrate the existing loki-stack installation before deploying; see docs/operations.en.md'
@@ -89,7 +102,7 @@ chart loki logging loki https://grafana.github.io/helm-charts "$LOKI_CHART_VERSI
 chart alloy logging alloy https://grafana.github.io/helm-charts "$ALLOY_CHART_VERSION" alloy
 chart argocd argocd argo-cd https://argoproj.github.io/argo-helm "$ARGOCD_CHART_VERSION" argocd
 chart ollama ai ollama https://otwld.github.io/ollama-helm "$OLLAMA_CHART_VERSION" ollama \
-    --set-string "extraEnv[0].value=$OLLAMA_MODEL"
+    "${ollama_args[@]}"
 chart k8sgpt-operator k8sgpt k8sgpt-operator https://charts.k8sgpt.ai "$K8SGPT_CHART_VERSION" k8sgpt
 
 if "$render"; then

@@ -50,6 +50,17 @@ kubectl exec -n ai deploy/ollama -- ollama pull qwen2.5:1.5b
 
 如果选择了其他模型，将命令中的模型名替换为当前选择。`ollama pull` 只下载或更新本地模型，不会更改 K8sGPT 使用的模型。
 
+### 为 Ollama 启用 NVIDIA GPU
+
+默认使用 CPU。如果实验节点已有 NVIDIA 驱动、容器运行时支持和设备插件，可为 Ollama 请求一块 GPU。先检查节点详情的 `Allocatable` 是否包含正数的 `nvidia.com/gpu`，再部署。驱动和设备插件的准备步骤见 [Kubernetes GPU 调度指南](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)。
+
+```bash
+kubectl describe nodes
+bash scripts/deploy.sh --nvidia-gpu
+```
+
+更新时继续传入该参数可保留 GPU 配置，省略则回到 CPU。若节点已公布 GPU 但 Ollama Pod 仍处于 `Pending`，先检查调度事件和 GPU 是否已被占用。如果集群要求指定 RuntimeClass，在 `config/helm/ollama.yaml` 中填写集群已配置的 `runtimeClassName`。模型加载后，可在 Ollama 容器里运行 `ollama ps` 查看模型使用 CPU 还是 GPU。
+
 ## 访问界面
 
 下面每条端口转发命令在单独的终端中运行，按 `Ctrl+C` 停止。默认只监听本机回环地址。
@@ -168,6 +179,19 @@ kubectl describe results -n k8sgpt
 K8sGPT 结果需要结合事件和应用日志判断，不会自动修复资源。若未生成结果，先检查 Operator、分析器 Pod 和 Ollama 日志，再确认模型已加载、服务可访问以及集成配置中的模型一致。
 
 监控栈带有规则评估和 Alertmanager 组件，但仓库不配置外部收件人。要接收通知，需要自行配置接收器和凭据，并实际测试发送与恢复通知。第三方机器人接口不一定接受 Alertmanager 的通用 Webhook 格式，应按对应渠道的协议使用接收器或适配服务。
+
+在实验集群中，可用一条临时规则检查 VMAlert 是否把告警送到 Alertmanager。如果已配置外部接收器，先确认测试告警会进入预期渠道。
+
+```bash
+kubectl create -f examples/alerting/smoke-rule.yaml
+kubectl port-forward -n monitoring svc/vmalertmanager-vm 9093:9093
+```
+
+打开 `http://127.0.0.1:9093`，等规则加载与评估后，查找 `QwqOpsSmokeTest`。规则使用固定表达式，可以单独检查告警链路。真实指标采集和外部通知仍需另外验证。查看完后按 `Ctrl+C` 停止端口转发，再删除临时规则。
+
+```bash
+kubectl delete vmrule qwq-ops-alert-smoke -n monitoring
+```
 
 ## 已有安装与升级
 

@@ -45,6 +45,9 @@ case "$*" in
     'get storageclass '*)
         if [[ $* == *metadata.name* ]]; then printf 'local-path|true|\n'
         else printf '%s\n' "${FAKE_STORAGE:-true}"; fi ;;
+    'get nodes '*'.status.allocatable.nvidia'*)
+        [[ -z ${FAIL_GPU_QUERY:-} ]] || exit 48
+        printf '%s\n' "${GPU_CAPACITY:-}" ;;
     'get nodes '*) printf '%s\n' "${FAKE_NODES-node|True}" ;;
     'get pods -n logging '*) printf '%s\n' "${LOGGING_PODS-${FAKE_PODS-pod|Running||True}}" ;;
     'get pods '*) printf '%s\n' "${FAKE_PODS-pod|Running||True}" ;;
@@ -106,9 +109,36 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(commands.count("helm|template "), 6)
         self.assertEqual(commands.count("--version "), 6)
         self.assertIn("extraEnv[0].value=tinyllama:latest", commands)
+        self.assertNotIn("ollama.gpu.enabled", commands)
         resources = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
         diagnosis = next(doc for doc in resources if doc["kind"] == "K8sGPT")
         self.assertEqual(diagnosis["spec"]["ai"]["model"], "tinyllama:latest")
+
+    def test_gpu_preview_works_without_a_cluster(self):
+        result, commands = self.run_script("deploy.sh", "--render", "--nvidia-gpu")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("kubectl|", commands)
+        ollama = next(line for line in commands.splitlines() if line.startswith("helm|template ollama "))
+        for setting in ("ollama.gpu.enabled=true", "ollama.gpu.type=nvidia", "ollama.gpu.number=1"):
+            self.assertIn(setting, ollama)
+
+    def test_gpu_deployment_requires_allocatable_capacity_before_helm(self):
+        for capacity in ("", "0"):
+            with self.subTest(capacity=capacity):
+                self.log.unlink(missing_ok=True)
+                result, commands = self.run_script("deploy.sh", "--nvidia-gpu", GPU_CAPACITY=capacity)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("allocatable nvidia.com/gpu", result.stderr)
+                self.assertNotIn("helm|", commands)
+        self.log.unlink(missing_ok=True)
+        result, commands = self.run_script("deploy.sh", "--nvidia-gpu", GPU_CAPACITY="0\n1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ollama.gpu.enabled=true", commands)
+
+    def test_gpu_capacity_api_failure_stops_deployment(self):
+        result, commands = self.run_script("deploy.sh", "--nvidia-gpu", FAIL_GPU_QUERY="yes")
+        self.assertEqual(result.returncode, 48)
+        self.assertNotIn("helm|", commands)
 
     def test_chart_render_failure_stops_the_sequence(self):
         result, commands = self.run_script("deploy.sh", "--render", FAIL_HELM="template")

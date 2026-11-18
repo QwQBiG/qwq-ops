@@ -1,0 +1,16 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: qwq-ops-alert-smoke
+  namespace: monitoring
+spec:
+  groups:
+    - name: qwq-ops-smoke
+      rules:
+        - alert: QwqOpsSmokeTest
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: info
+          annotations:
+            summary: Temporary test of rule evaluation and Alertmanager delivery
